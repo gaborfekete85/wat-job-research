@@ -6,7 +6,13 @@ from bs4 import BeautifulSoup
 from tools.shared.http import get
 
 SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-PAGE_SIZE = 25
+
+# LinkedIn's guest endpoint returns a variable page size (10 in practice, but it
+# has been observed to differ across queries). We always advance the `start`
+# offset by the actual count returned and stop only when a page is empty or we
+# get back an id we've already seen (their pagination occasionally repeats).
+DEFAULT_PAGE_SIZE_GUESS = 10
+SAFETY_PAGE_CAP = 100  # bail after this many page fetches as a circuit breaker
 
 def _txt(node) -> str:
     return " ".join(node.get_text(" ", strip=True).split()) if node else ""
@@ -33,9 +39,15 @@ def parse_search_html(html: str) -> list[dict]:
 
 def search(keywords: str, geo_id: str, *, posted_within_hours: int | None,
            limit: int) -> list[dict]:
+    """Walk the public guest endpoint until LinkedIn returns an empty page or
+    starts repeating job_ids. Advances `start` by the actual page size each
+    iteration (LinkedIn's page size is variable — 10 in practice).
+    """
     results: list[dict] = []
+    seen: set[str] = set()
     start = 0
-    while len(results) < limit:
+    pages_fetched = 0
+    while len(results) < limit and pages_fetched < SAFETY_PAGE_CAP:
         params = {"keywords": keywords, "geoId": geo_id, "start": start}
         if posted_within_hours:
             params["f_TPR"] = f"r{posted_within_hours * 3600}"
@@ -45,12 +57,20 @@ def search(keywords: str, geo_id: str, *, posted_within_hours: int | None,
             raise RuntimeError("LinkedIn returned 429 — rate limited")
         r.raise_for_status()
         page = parse_search_html(r.text)
+        pages_fetched += 1
         if not page:
             break
-        results.extend(page)
-        if len(page) < PAGE_SIZE:
+        # Some LinkedIn responses repeat cards from the previous page once you
+        # walk past their real result set — detect that and stop.
+        fresh = [j for j in page if j["job_id"] not in seen]
+        if not fresh:
             break
-        start += PAGE_SIZE
+        for j in fresh:
+            seen.add(j["job_id"])
+        results.extend(fresh)
+        # Advance by the FULL page count returned (NOT by len(fresh)) — that's
+        # what LinkedIn expects as the next offset.
+        start += len(page) or DEFAULT_PAGE_SIZE_GUESS
     return results[:limit]
 
 def main() -> int:
