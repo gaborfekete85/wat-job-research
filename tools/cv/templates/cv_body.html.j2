@@ -5,7 +5,10 @@
 <style>
   @page {
     size: A4;
-    margin: {{ top_margin_cm }}cm 1.5cm 2cm 1.5cm;
+    margin: 1.5cm 1.5cm 2cm 1.5cm;   /* normal top margin for page 2+ */
+  }
+  @page :first {
+    margin-top: {{ top_margin_cm }}cm;   /* leave room for the source header overlay */
   }
   body {
     font-family: 'Source Sans 3', 'Helvetica Neue', Arial, sans-serif;
