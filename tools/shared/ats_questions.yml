@@ -1,0 +1,19 @@
+# Common ATS questions worth drafting answers for. Keep this short — the LLM
+# tailors answers from profile.md + JD. User edits before submitting.
+questions:
+  - id: motivation
+    text: "Why are you interested in this role / this company?"
+  - id: notice_period
+    text: "What is your notice period?"
+  - id: salary_expectations
+    text: "What are your salary expectations? (CHF gross/year)"
+  - id: work_authorization
+    text: "Do you require work authorization sponsorship in Switzerland?"
+  - id: languages
+    text: "What languages do you speak and at what level?"
+  - id: relocation
+    text: "Are you willing to relocate or already based in the area?"
+  - id: start_date
+    text: "When could you start?"
+  - id: remote_preference
+    text: "What is your preference for remote / hybrid / on-site?"
