@@ -7,13 +7,13 @@ languages:
   JavaScript:  [javascript, js, ecmascript]
   TypeScript:  [typescript, ts]
   SQL:         [sql, "ansi sql"]
-  Go:          [go, golang]
+  Go:          [golang]
   Rust:        [rust]
   Kotlin:      [kotlin]
   Scala:       [scala]
   C++:         ["c++", cpp]
   C#:          ["c#", csharp, "dotnet", ".net"]
-  Bash:        [bash, shell, "shell script"]
+  Bash:        [bash, "shell script", "shell scripting"]
   PHP:         [php]
   Ruby:        [ruby]
 
@@ -23,7 +23,7 @@ frameworks:
   Django:           [django]
   Flask:            [flask]
   React:            [react, reactjs, "react.js"]
-  "Node.js":        ["node.js", nodejs, node]
+  "Node.js":        ["node.js", nodejs, "node js"]
   Express:          [express, expressjs, "express.js"]
   Angular:          [angular, angularjs]
   Vue:              [vue, vuejs, "vue.js"]
@@ -36,7 +36,7 @@ frameworks:
   Hibernate:        [hibernate, jpa]
 
 cloud_devops:
-  AWS:           [aws, "amazon web services", ec2, ecs, eks, s3, rds, vpc, cloudwatch, lambda, "api gateway"]
+  AWS:           [aws, "amazon web services", ec2, ecs, eks, s3, rds, vpc, cloudwatch, "aws lambda", "api gateway"]
   GCP:           [gcp, "google cloud", "google cloud platform"]
   Azure:         [azure, "microsoft azure"]
   Kubernetes:    [kubernetes, k8s]
@@ -96,11 +96,11 @@ ai_ml:
   RAG:            [rag, "retrieval augmented generation"]
   "Vector DB":    ["vector database", "vector db", pinecone, weaviate, qdrant, milvus]
   OpenAI:         [openai, "open ai"]
-  Anthropic:      [anthropic, claude]
+  Anthropic:      [anthropic]
   LangChain:      [langchain]
 
 soft:
-  Leadership:     ["team leadership", "tech lead", lead, leadership]
+  Leadership:     ["team leadership", "tech lead", leadership]
   Mentoring:      [mentoring, mentorship, coaching]
   Agile:          [agile, scrum, kanban, "agile/scrum", sprint]
   Communication:  [communication, "communication skills", "stakeholder management"]
