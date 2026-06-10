@@ -1,12 +1,33 @@
-# WAT Job Search
+# WAT Job Research
 
 Automated LinkedIn job research with tailored CV generation. Runs from
 Claude Desktop in this directory — no command-line orchestrator.
 
-## Install
+## One-line install
+
 ```bash
+curl -fsSL https://raw.githubusercontent.com/gaborfekete85/wat-job-research/main/install.sh | bash
+```
+
+The installer:
+- clones the repo to `$HOME/wat-job-research` (override with `WAT_INSTALL_DIR=…`)
+- creates `.venv` with Python 3.11+
+- `pip install -e ".[dev]"`
+- seeds `.env` (placeholder API key) and `temp/resources/profile.md` (CV template
+  from `examples/profile.md`) — neither is overwritten on re-run
+- smoke-tests every Python import
+
+Idempotent — re-run any time to pull `main` and reinstall deps.
+
+### Manual install (if you'd rather not pipe curl into bash)
+
+```bash
+git clone https://github.com/gaborfekete85/wat-job-research.git
+cd wat-job-research
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env  # add your ANTHROPIC_API_KEY
+cp .env.example .env                       # add your ANTHROPIC_API_KEY (optional)
+cp examples/profile.md temp/resources/profile.md   # edit with your CV
 ```
 
 ## Use
