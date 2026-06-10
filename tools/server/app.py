@@ -143,18 +143,39 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
 
     @app.get("/api/jobs")
     def list_jobs() -> dict:
+        """Triage buckets only. Filtered-out jobs are a separate concern —
+        fetch them via /api/jobs/filtered to keep this response lean.
+        """
         conn = _conn()
         try:
             new = [_row_to_summary(r) for r in db_store.list_jobs(conn, status="new")]
             viewed = [_row_to_summary(r) for r in db_store.list_jobs(conn, status="viewed")]
             staged = [_row_to_summary(r) for r in db_store.list_jobs(conn, status="staged")]
             submitted = [_row_to_summary(r) for r in db_store.list_jobs(conn, status="submitted")]
+            # Count only — content streamed via /api/jobs/filtered to keep
+            # the main response small even after big backfills.
+            filtered_count = len(db_store.list_jobs(conn, status="filtered_out"))
             return {
                 "new": new,
                 "viewed": viewed,
                 "staged": staged,
                 "submitted": submitted,
+                "filtered_out_count": filtered_count,
             }
+        finally:
+            conn.close()
+
+    @app.get("/api/jobs/filtered")
+    def list_filtered_jobs() -> list[dict]:
+        """All jobs the backfill kept aside because their keyword similarity
+        was below the threshold. Sorted by score DESC so the near-misses
+        (the ones most worth promoting back to NEW) appear first.
+        """
+        conn = _conn()
+        try:
+            rows = db_store.list_jobs(conn, status="filtered_out")
+            rows.sort(key=lambda r: (r.get("keyword_score") or 0), reverse=True)
+            return [_row_to_summary(r) for r in rows]
         finally:
             conn.close()
 

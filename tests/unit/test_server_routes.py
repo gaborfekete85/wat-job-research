@@ -43,7 +43,8 @@ def test_list_jobs_empty(test_app):
     r = client.get("/api/jobs")
     assert r.status_code == 200
     body = r.json()
-    assert body == {"new": [], "viewed": [], "staged": [], "submitted": []}
+    assert body == {"new": [], "viewed": [], "staged": [],
+                    "submitted": [], "filtered_out_count": 0}
 
 
 def test_list_jobs_returns_new_jobs(test_app):
@@ -197,6 +198,75 @@ def test_pdfs_endpoint_404_when_no_path(test_app):
     _seed(db_path)
     r = client.get("/pdfs/100.pdf")
     assert r.status_code == 404
+
+
+# ── /api/jobs/filtered ──────────────────────────────────────────────────────
+
+
+def test_filtered_jobs_endpoint_empty_initially(test_app):
+    client, _ = test_app
+    r = client.get("/api/jobs/filtered")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_filtered_jobs_endpoint_returns_filtered_out_status(test_app):
+    client, db_path = test_app
+    # Seed two jobs: 100 stays 'new', 200 gets moved to 'filtered_out'.
+    _seed(db_path)
+    _seed(db_path, job_id="200")
+    conn = db_store.init_db(db_path)
+    try:
+        db_store.set_status(conn, "200", "filtered_out")
+    finally:
+        conn.close()
+
+    body = client.get("/api/jobs/filtered").json()
+    assert len(body) == 1
+    assert body[0]["id"] == "200"
+
+    main = client.get("/api/jobs").json()
+    assert main["filtered_out_count"] == 1
+    assert len(main["new"]) == 1   # 100 still in new
+
+
+def test_filtered_jobs_endpoint_sorts_by_score_descending(test_app):
+    client, db_path = test_app
+    _seed(db_path, job_id="LOW")
+    _seed(db_path, job_id="HIGH")
+    _seed(db_path, job_id="MID")
+    conn = db_store.init_db(db_path)
+    try:
+        for jid in ("LOW", "HIGH", "MID"):
+            db_store.set_status(conn, jid, "filtered_out")
+        # Override scores manually
+        conn.execute("UPDATE jobs SET keyword_score=? WHERE id=?", (0.1, "LOW"))
+        conn.execute("UPDATE jobs SET keyword_score=? WHERE id=?", (0.5, "MID"))
+        conn.execute("UPDATE jobs SET keyword_score=? WHERE id=?", (0.7, "HIGH"))
+        conn.commit()
+    finally:
+        conn.close()
+
+    body = client.get("/api/jobs/filtered").json()
+    assert [j["id"] for j in body] == ["HIGH", "MID", "LOW"]
+
+
+def test_filtered_jobs_can_be_promoted_back_via_set_status(test_app):
+    client, db_path = test_app
+    _seed(db_path)
+    conn = db_store.init_db(db_path)
+    try:
+        db_store.set_status(conn, "100", "filtered_out")
+    finally:
+        conn.close()
+
+    r = client.post("/api/jobs/100/status", json={"status": "new"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "new"
+
+    main = client.get("/api/jobs").json()
+    assert main["filtered_out_count"] == 0
+    assert any(j["id"] == "100" for j in main["new"])
 
 
 # ── Preferences ──────────────────────────────────────────────────────────────

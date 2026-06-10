@@ -9,7 +9,7 @@ from typing import Any
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 DEFAULT_DB_PATH = Path("temp/outputs/jobs.db")
 
-ALLOWED_STATUSES = {"new", "viewed", "staged", "submitted", "dismissed"}
+ALLOWED_STATUSES = {"new", "viewed", "staged", "submitted", "dismissed", "filtered_out"}
 
 
 def init_db(db_path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -113,13 +113,23 @@ def upsert_job(conn: sqlite3.Connection, job: dict) -> str:
     return job_id
 
 
-def insert_if_new(conn: sqlite3.Connection, job: dict) -> bool:
+def insert_if_new(conn: sqlite3.Connection, job: dict,
+                  *, initial_status: str = "new") -> bool:
     """Insert a job only if no row with this id exists.
 
     Returns True if inserted, False if a row with this id was already present.
+    `initial_status` defaults to 'new' but can be any ALLOWED_STATUSES value —
+    the backfill uses 'filtered_out' for jobs below the keyword threshold so
+    they're kept around for later review without polluting the main triage
+    columns.
+
     This is the dedup-on-ingest path used by the backfill workflow: a known
     job is left ENTIRELY UNTOUCHED (status, scores, all timestamps preserved).
     """
+    if initial_status not in ALLOWED_STATUSES:
+        raise ValueError(
+            f"invalid initial_status {initial_status!r}; allowed: {sorted(ALLOWED_STATUSES)}"
+        )
     row = _job_to_row(job)
     cur = conn.execute("SELECT id FROM jobs WHERE id = ?", (row["id"],))
     if cur.fetchone() is not None:
@@ -131,13 +141,13 @@ def insert_if_new(conn: sqlite3.Connection, job: dict) -> bool:
             keyword_score, llm_final_score, match_result_json,
             status, discovered_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row["id"], row["title"], row["company"], row["location"],
             row["description"], row["link"], row["apply_url"],
             row["keyword_score"], row["llm_final_score"], row["match_result_json"],
-            _now_iso(),
+            initial_status, _now_iso(),
         ),
     )
     conn.commit()

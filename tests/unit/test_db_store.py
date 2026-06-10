@@ -160,6 +160,23 @@ def test_insert_if_new_preserves_status(db):
     assert store.get_job(db, "1234")["status"] == "viewed"
 
 
+def test_insert_if_new_accepts_initial_status(db):
+    inserted = store.insert_if_new(db, _sample_job(), initial_status="filtered_out")
+    assert inserted is True
+    assert store.get_job(db, "1234")["status"] == "filtered_out"
+
+
+def test_insert_if_new_rejects_invalid_initial_status(db):
+    with pytest.raises(ValueError, match="invalid initial_status"):
+        store.insert_if_new(db, _sample_job(), initial_status="bogus")
+
+
+def test_set_status_accepts_filtered_out(db):
+    store.upsert_job(db, _sample_job())
+    store.set_status(db, "1234", "filtered_out")
+    assert store.get_job(db, "1234")["status"] == "filtered_out"
+
+
 def test_set_tailored_pdf(db, tmp_path):
     store.upsert_job(db, _sample_job())
     pdf = tmp_path / "tailored.pdf"

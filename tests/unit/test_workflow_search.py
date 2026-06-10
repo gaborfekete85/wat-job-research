@@ -70,7 +70,7 @@ def _detail(job_id: str, description: str):
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
-def test_backfill_inserts_jobs_above_threshold(isolated_db, fake_profile):
+def test_backfill_inserts_above_threshold_as_new(isolated_db, fake_profile):
     summaries = [_summary("A"), _summary("B")]
     details = {
         # 4 skills, all in profile → score 1.0 (well above 0.7)
@@ -90,13 +90,39 @@ def test_backfill_inserts_jobs_above_threshold(isolated_db, fake_profile):
 
     assert stats.total_found == 2
     assert stats.inserted == 1
-    assert stats.skipped_below_threshold == 1
+    assert stats.inserted_filtered_out == 1   # B is now KEPT as filtered_out
     assert stats.skipped_existing == 0
 
     conn = db_store.init_db(isolated_db)
     try:
-        assert db_store.get_job(conn, "A") is not None
-        assert db_store.get_job(conn, "B") is None
+        row_a = db_store.get_job(conn, "A")
+        row_b = db_store.get_job(conn, "B")
+        assert row_a is not None and row_a["status"] == "new"
+        assert row_b is not None and row_b["status"] == "filtered_out"
+    finally:
+        conn.close()
+
+
+def test_backfill_filtered_out_jobs_retain_their_status(isolated_db, fake_profile):
+    """Below-threshold jobs stay in the Filtered Out bucket — they don't
+    pollute the NEW column even though they were just discovered."""
+    summaries = [_summary("F")]
+    details = {"F": _detail("F", "We need Rust only.")}  # score 0.0
+
+    with patch("tools.workflow.search.search_jobs.search", return_value=summaries), \
+         patch("tools.workflow.search._fetch_job_detail", side_effect=lambda jid: details[jid]):
+        backfill.run_backfill(
+            keywords="engineer", location_geo_id="X",
+            db_path=isolated_db, profile_path=fake_profile,
+        )
+
+    conn = db_store.init_db(isolated_db)
+    try:
+        new_jobs = db_store.list_jobs(conn, status="new")
+        filtered_jobs = db_store.list_jobs(conn, status="filtered_out")
+        assert new_jobs == []
+        assert len(filtered_jobs) == 1
+        assert filtered_jobs[0]["id"] == "F"
     finally:
         conn.close()
 

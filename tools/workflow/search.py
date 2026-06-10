@@ -38,11 +38,13 @@ ProgressCb = Callable[[str, dict], None] | None
 @dataclass
 class BackfillStats:
     """Final counts reported by run_backfill()."""
-    total_found: int = 0           # jobs returned by LinkedIn search
-    skipped_existing: int = 0      # already in DB → untouched
-    skipped_below_threshold: int = 0
+    total_found: int = 0              # jobs returned by LinkedIn search
+    skipped_existing: int = 0         # already in DB → untouched
+    inserted: int = 0                 # above threshold → status='new'
+    inserted_filtered_out: int = 0    # below threshold → status='filtered_out'
+                                       #   (kept for later review on the
+                                       #    Filtered Out dashboard page)
     fetch_failures: int = 0
-    inserted: int = 0
     elapsed_seconds: float = 0.0
     threshold: float = DEFAULT_THRESHOLD
     days_back: int = DEFAULT_DAYS_BACK
@@ -51,9 +53,9 @@ class BackfillStats:
         return {
             "total_found": self.total_found,
             "skipped_existing": self.skipped_existing,
-            "skipped_below_threshold": self.skipped_below_threshold,
-            "fetch_failures": self.fetch_failures,
             "inserted": self.inserted,
+            "inserted_filtered_out": self.inserted_filtered_out,
+            "fetch_failures": self.fetch_failures,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "threshold": self.threshold,
             "days_back": self.days_back,
@@ -156,14 +158,20 @@ def run_backfill(
             full = {**summary, **detail}
             jd_skills = extract_from_text(full.get("description") or "")
             ks = score_keyword(profile_skills, jd_skills)
-            if ks["score"] < threshold:
-                stats.skipped_below_threshold += 1
-                continue
-
             full["keyword_score"] = ks
-            inserted = db_store.insert_if_new(conn, full)
+
+            # Above threshold → status='new' (main triage flow).
+            # Below threshold → status='filtered_out' (kept for later review
+            # on the Filtered Out dashboard page so the user can spot jobs
+            # the keyword matcher dismissed but that might still be relevant).
+            above = ks["score"] >= threshold
+            initial_status = "new" if above else "filtered_out"
+            inserted = db_store.insert_if_new(conn, full, initial_status=initial_status)
             if inserted:
-                stats.inserted += 1
+                if above:
+                    stats.inserted += 1
+                else:
+                    stats.inserted_filtered_out += 1
             else:
                 # Tiny race window — another writer added this id between the
                 # earlier get_job check and now. Treat as skip-existing.

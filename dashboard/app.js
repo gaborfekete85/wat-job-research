@@ -61,6 +61,11 @@ const api = {
     if (!r.ok) throw new Error(`list: ${r.status}`);
     return r.json();
   },
+  async listFilteredJobs() {
+    const r = await fetch("/api/jobs/filtered");
+    if (!r.ok) throw new Error(`list filtered: ${r.status}`);
+    return r.json();
+  },
   async getJob(id) {
     const r = await fetch(`/api/jobs/${id}`);
     if (!r.ok) throw new Error(`get ${id}: ${r.status}`);
@@ -545,6 +550,64 @@ function BackfillPanel({ onRefreshJobs }) {
     </div>`;
 }
 
+function FilteredOutView({ jobs, jobDetails, expandedJobId, onPromote, onDismiss, onToggleExpand }) {
+  if (!jobs) {
+    return html`<div className="text-sm text-slate-400 italic p-6 text-center">Loading…</div>`;
+  }
+  if (jobs.length === 0) {
+    return html`
+      <div className="text-sm text-slate-400 italic p-8 text-center border border-dashed border-slate-300 rounded">
+        No filtered-out jobs yet. Run a backfill; jobs whose keyword similarity
+        is below the threshold will land here for review.
+      </div>`;
+  }
+  return html`
+    <div className="text-xs text-slate-500 mb-3">
+      ${jobs.length} jobs were stored aside because their keyword similarity is below the
+      configured threshold. Sorted by score — the near-misses (likely missed by the keyword
+      matcher) appear first. Click <b>Move to NEW</b> to promote a job into the main triage.
+    </div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">
+      ${jobs.map(j => html`
+        <div key=${j.id} className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm">
+          <div className="flex items-start gap-2">
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-sm leading-tight">${j.title}</h3>
+              <p className="text-xs text-slate-600 mt-0.5">
+                ${j.company}${j.location ? ` · ${j.location}` : ""}
+              </p>
+              <div className="mt-1.5">
+                <${ScoreBadge} label="KW" value=${j.keyword_score} />
+              </div>
+            </div>
+          </div>
+          ${expandedJobId === j.id && jobDetails[j.id] ? html`
+            <div className="mt-3 pt-3 border-t border-slate-200 text-xs text-slate-700">
+              <p className="whitespace-pre-wrap">${(jobDetails[j.id].description || "").slice(0, 800)}${(jobDetails[j.id].description || "").length > 800 ? "…" : ""}</p>
+            </div>` : null}
+          <div className="flex gap-2 mt-2 flex-wrap">
+            <button onClick=${() => onToggleExpand(j.id)}
+              className="text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">
+              ${expandedJobId === j.id ? "Collapse" : "View JD"}
+            </button>
+            ${j.link ? html`
+              <a href=${j.link} target="_blank" rel="noopener noreferrer"
+                className="text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">
+                LinkedIn ↗
+              </a>` : null}
+            <button onClick=${() => onPromote(j.id)}
+              className="text-xs px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700">
+              Move to NEW
+            </button>
+            <button onClick=${() => onDismiss(j.id)}
+              className="text-xs px-2 py-1 rounded text-slate-400 hover:text-rose-600 ml-auto">
+              Dismiss
+            </button>
+          </div>
+        </div>`)}
+    </div>`;
+}
+
 function Toast({ message, type }) {
   if (!message) return null;
   const cls = type === "error"
@@ -559,7 +622,9 @@ function Toast({ message, type }) {
 // ─── App ───────────────────────────────────────────────────────────────────
 
 function App() {
-  const [jobs, setJobs] = useState({ new: [], viewed: [], staged: [], submitted: [] });
+  const [tab, setTab] = useState("triage");   // "triage" | "filtered"
+  const [jobs, setJobs] = useState({ new: [], viewed: [], staged: [], submitted: [], filtered_out_count: 0 });
+  const [filteredJobs, setFilteredJobs] = useState(null);   // null = not yet loaded
   const [prefs, setPrefs] = useState(null);
   const [pdfStates, setPdfStates] = useState({});  // {job_id: 'running' | 'done' | 'error:…'}
   const [expandedJobId, setExpandedJobId] = useState(null);
@@ -586,6 +651,21 @@ function App() {
       setToast({ msg: `Failed to load preferences: ${e.message}`, type: "error" });
     }
   }, []);
+
+  const loadFilteredJobs = useCallback(async () => {
+    try {
+      const list = await api.listFilteredJobs();
+      setFilteredJobs(list);
+    } catch (e) {
+      setToast({ msg: `Failed to load filtered jobs: ${e.message}`, type: "error" });
+    }
+  }, []);
+
+  // Load filtered list lazily when the tab is opened, and refresh whenever
+  // we re-fetch the triage buckets (so counts stay in sync).
+  useEffect(() => {
+    if (tab === "filtered") loadFilteredJobs();
+  }, [tab, lastRefresh, loadFilteredJobs]);
 
   const handleSavePrefs = useCallback(async (draft) => {
     try {
@@ -723,6 +803,29 @@ function App() {
 
       <${BackfillPanel} onRefreshJobs=${refresh} />
 
+      <div className="flex gap-1 border-b border-slate-200 mb-4">
+        <button
+          onClick=${() => setTab("triage")}
+          className=${`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === "triage" ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+          Triage <span className="ml-1 text-xs text-slate-400">(${total})</span>
+        </button>
+        <button
+          onClick=${() => setTab("filtered")}
+          className=${`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === "filtered" ? "border-amber-600 text-amber-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+          Filtered Out <span className="ml-1 text-xs text-slate-400">(${jobs.filtered_out_count || 0})</span>
+        </button>
+      </div>
+
+      ${tab === "filtered" ? html`
+        <${FilteredOutView}
+          jobs=${filteredJobs}
+          jobDetails=${jobDetails}
+          expandedJobId=${expandedJobId}
+          onPromote=${(id) => handleDropJob(id, "new").then(loadFilteredJobs)}
+          onDismiss=${(id) => handleDismiss(id).then(loadFilteredJobs)}
+          onToggleExpand=${handleToggleExpand}
+        />
+      ` : html`
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <${Column}
           title="NEW" accent="border-blue-500" status="new"
@@ -776,7 +879,7 @@ function App() {
           onDropJob=${handleDropJob}
           emptyMessage="No submitted applications yet. Drag a card from STAGED here once you've actually submitted."
         />
-      </div>
+      </div>`}
 
       <${Toast} message=${toast.msg} type=${toast.type} />
     </div>`;
