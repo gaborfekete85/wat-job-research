@@ -23,3 +23,7 @@ __pycache__/
 
 # Claude Code memsearch cache
 .memsearch/
+
+# rendercv accidentally drops theme templates here when invoked from project root
+classic/
+markdown/
