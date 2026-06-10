@@ -13,8 +13,8 @@ The installer:
 - clones the repo to `$HOME/wat-job-research` (override with `WAT_INSTALL_DIR=…`)
 - creates `.venv` with Python 3.11+
 - `pip install -e ".[dev]"`
-- seeds `.env` (placeholder API key) and `temp/resources/profile.md` (CV template
-  from `examples/profile.md`) — neither is overwritten on re-run
+- seeds `.env` (placeholder API key) and `profile/profile.md` (CV template
+  from `profile/profile.md.example`) — neither is overwritten on re-run
 - smoke-tests every Python import
 
 Idempotent — re-run any time to pull `main` and reinstall deps.
@@ -26,9 +26,32 @@ git clone https://github.com/gaborfekete85/wat-job-research.git
 cd wat-job-research
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env                       # add your ANTHROPIC_API_KEY (optional)
-cp examples/profile.md temp/resources/profile.md   # edit with your CV
+cp .env.example .env                                # add your ANTHROPIC_API_KEY (optional)
+cp profile/profile.md.example profile/profile.md    # edit with your CV
+cp ~/Downloads/your-cv.pdf profile/cv_source.pdf    # your existing CV PDF (header is preserved)
 ```
+
+## Your profile (crucial — every step reads from here)
+
+Everything in this project — keyword matching, JD scoring, CV tailoring,
+cover letter drafting — reads from a **single source of truth**:
+
+```
+profile/
+  ├── profile.md.example   ← starter template (tracked in git)
+  ├── README.md            ← how-to (tracked)
+  ├── profile.md           ← YOUR CV in YAML + free text (gitignored)
+  └── cv_source.pdf        ← YOUR existing CV PDF — its header (QR codes /
+                              photo / contact / LinkedIn icon) is preserved
+                              on every tailored CV. (gitignored)
+```
+
+Both `profile.md` and `cv_source.pdf` are gitignored by default so they
+never accidentally leak into a public fork. If you want them to follow
+you across machines via your **private** fork, `git add -f` them
+intentionally.
+
+See [profile/README.md](profile/README.md) for details.
 
 ## Use
 
@@ -40,195 +63,76 @@ and orchestrates the individual tools step by step.
 
 ## Dashboard
 
-A three-column dashboard (NEW / VIEWED / STAGED) backed by SQLite at
-`temp/outputs/jobs.db`. Click **Generate PDF** on a job that already has an LLM
-match score to trigger the tailor + render pipeline; the resulting CV opens
-in a new tab. Jobs persist across runs — what you see today will still be
-there tomorrow with the same statuses.
+A persistent dashboard (NEW / VIEWED / STAGED / SUBMITTED / FILTERED OUT)
+backed by SQLite at `temp/outputs/jobs.db`. Drag cards between columns to
+triage, click **Generate PDF** on a job with an LLM score to trigger the
+tailor+render pipeline, and drag to SUBMITTED once you've actually applied.
+Jobs persist across runs — what you see today will still be there tomorrow
+with the same statuses.
 
 ### Start the server
-
-From the project root, with the venv:
 
 ```bash
 .venv/bin/python -m tools.server
 ```
 
 Then open **[http://localhost:8765](http://localhost:8765)** in your browser.
+The default port is 8765; override with `--port 9000` if needed.
 
-The default port is 8765; override with `--port`:
-```bash
-.venv/bin/python -m tools.server --port 9000
-```
-
-### Run it in the background (so you don't have to keep the terminal open)
+### Run it in the background
 
 ```bash
 nohup .venv/bin/python -m tools.server > temp/outputs/server.log 2>&1 &
-echo $! > temp/outputs/server.pid     # remember the PID so we can stop it later
-```
+echo $! > temp/outputs/server.pid
 
-Stop it:
-```bash
+# stop it later
 kill "$(cat temp/outputs/server.pid)" && rm temp/outputs/server.pid
-```
 
-Live-tail the log while it's running:
-```bash
+# follow the log
 tail -f temp/outputs/server.log
 ```
 
-### "I see empty columns — nothing is showing up"
+### Empty columns?
 
-The dashboard reads the SQLite DB. If you haven't run a search yet, the DB has
-no rows. Two paths to populate it:
+The dashboard reads SQLite. Until you've run a search, the DB has no rows.
+Easiest fix: open this dir in Claude Desktop and run `/collect-jobs` — see
+the next section.
 
-- **Most common:** ask Claude Desktop in this directory to run the workflow
-  (e.g. *"Find me jobs in Zurich matching 'ai OR software developer'"*). The
-  workflow runs the LinkedIn pipeline and calls `python -m tools.db.ingest`
-  to seed the DB.
-- **Manual ingest** of an existing run:
-  ```bash
-  .venv/bin/python -m tools.db.ingest \
-      --jobs temp/outputs/runs/<timestamp>/jobs_filtered.json
-  ```
+## Two slash commands you'll use most
 
-After ingesting, refresh the browser tab — the new jobs show up in the NEW
-column.
+Both are project-local — they're available the moment you open this
+directory in Claude Desktop.
 
-### Server-side API (Claude can call these too)
-
-| Endpoint | Use |
+| Slash command | What it does |
 |---|---|
-| `GET /api/jobs` | list new/viewed/staged/submitted buckets |
-| `GET /api/jobs/{id}` | full row including JD and LLM match result |
-| `POST /api/jobs/{id}/view` | mark a job as VIEWED |
-| `POST /api/jobs/{id}/dismiss` | hide a job |
-| `POST /api/jobs/{id}/generate-pdf` | kick off tailor+render (refuses 409 if no LLM score yet) |
-| `GET /api/jobs/{id}/pdf-status` | poll PDF render progress (`idle` / `running` / `done` / `error:…`) |
-| `GET /pdfs/{id}.pdf` | download the staged tailored CV |
+| `/collect-jobs [--days N] [--threshold 0.5]` | Run one backfill (paginated LinkedIn search → keyword score → dedup insert). Claude reports the diff (NEW vs FILTERED OUT vs skipped). |
+| `/schedule-collect [install \| remove \| status]` | Install (or remove, or check) a macOS launchd agent that fires `/collect-jobs` every hour while the laptop is awake. No remote infrastructure; nothing to push. |
 
-## Scheduling — run the backfill automatically every hour
+**Hourly auto-collection in three messages:**
 
-The recommended path is a **local launchd agent on macOS**. The remote-routine
-system in Claude Code (see "Alternatives" below) doesn't fit because this
-project's state (SQLite DB, cache, dashboard) lives on your laptop — a cloud
-sandbox can't reach any of it.
+> *"/schedule-collect install"* — Claude writes `~/Library/LaunchAgents/com.${USER}.wat-collect-jobs.plist`, loads it via launchctl, fires it once as a smoke test, and reports what it did.
+>
+> *"/schedule-collect status"* — confirms it's still loaded and shows the last few runs from `temp/outputs/launchd.log`.
+>
+> *"/schedule-collect remove"* — unloads and deletes the plist when you don't need it anymore.
 
-### One-time setup (macOS)
-
-1. **The wrapper script is already in the repo:** [`scripts/collect-jobs-hourly.sh`](scripts/collect-jobs-hourly.sh).
-   It `cd`s to the project root, sources `.env`, and runs
-   `python -m tools.workflow.search "$@"` — logging to `temp/outputs/launchd.log`.
-
-   Make sure it's executable:
-   ```bash
-   chmod +x scripts/collect-jobs-hourly.sh
-   ```
-
-2. **Create the launchd plist.** Open `~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist`
-   and paste:
-
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-   <plist version="1.0">
-   <dict>
-       <key>Label</key>
-       <string>com.feketegabor.wat-collect-jobs</string>
-
-       <key>ProgramArguments</key>
-       <array>
-           <string>/bin/bash</string>
-           <string>/Users/gaborfekete/my-projects/my-agent/wat-frameworks/job-search/scripts/collect-jobs-hourly.sh</string>
-       </array>
-
-       <!-- Fire every 3600 seconds = 1 hour while the laptop is awake.
-            If the laptop is asleep at the scheduled tick, launchd will fire
-            once on wake instead of catching up multiple times. -->
-       <key>StartInterval</key>
-       <integer>3600</integer>
-
-       <!-- Don't run on plist load — the user runs it manually first to
-            confirm the wrapper works, then trusts the hourly cadence. -->
-       <key>RunAtLoad</key>
-       <false/>
-
-       <key>StandardOutPath</key>
-       <string>/Users/gaborfekete/my-projects/my-agent/wat-frameworks/job-search/temp/outputs/launchd.out.log</string>
-
-       <key>StandardErrorPath</key>
-       <string>/Users/gaborfekete/my-projects/my-agent/wat-frameworks/job-search/temp/outputs/launchd.err.log</string>
-   </dict>
-   </plist>
-   ```
-
-   Replace the absolute paths if your project lives somewhere else.
-
-3. **Load it:**
-   ```bash
-   launchctl load ~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist
-   ```
-
-4. **Sanity-test it once, manually:**
-   ```bash
-   launchctl start com.feketegabor.wat-collect-jobs
-   tail -f temp/outputs/launchd.log
-   ```
-   You should see a `/collect-jobs` block appended, ending with the stats line.
-
-### Managing the schedule
-
-```bash
-# Confirm it's loaded (look for the Label in the output)
-launchctl list | grep wat-collect-jobs
-
-# Fire it on demand
-launchctl start com.feketegabor.wat-collect-jobs
-
-# Live-tail the rolling log
-tail -f temp/outputs/launchd.log
-
-# Stop it temporarily (unload — survives until you reload)
-launchctl unload ~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist
-
-# Re-arm it
-launchctl load ~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist
-
-# Change the cadence: edit StartInterval (seconds) in the plist, then
-# unload + load again to pick up the change.
-```
-
-### What happens on each run
-
-1. Wrapper sources `.env` and `cd`s to the project root.
-2. `python -m tools.workflow.search` runs with the **saved DB preferences**
-   (`keywords`, `location`, `location_geo_id`) and **default threshold 0.5**.
-3. New jobs land in NEW (or FILTERED_OUT for below-threshold). Existing job IDs
-   are skipped untouched — your triage state survives every run.
-4. The dashboard at `http://localhost:8765` auto-refreshes every 5 seconds, so
-   new rows appear without a manual reload.
-
-Cost per run: **$0** (the backfill is pure regex + arithmetic; no Anthropic API).
-Typical wall-clock: 1–4 minutes depending on cache hits.
-
-### Alternatives (and why they don't fit as cleanly)
-
-| Option | When it makes sense | Why we didn't pick it |
-|---|---|---|
-| **Claude Code remote routine** (`/schedule`) | Project state lives in cloud (GitHub, hosted DB, public APIs). | Remote sandbox can't reach our local SQLite, local cache, or `localhost:8765`. |
-| **`/loop /collect-jobs 1h`** | You keep a Claude session open all day anyway. | Stops the moment the Claude session closes. |
-| **`crontab -e` with `0 * * * *`** | Linux server, or you prefer the classic cron syntax. | Equivalent to launchd on macOS — just less native. Pick whichever you're more comfortable maintaining. |
+Both commands use **zero Anthropic API credits** by default — the backfill
+itself is pure deterministic regex + arithmetic (see
+[`tools/workflow/search.py`](tools/workflow/search.py) for the entire
+~200-line orchestrator).
 
 ## Where artifacts go
 
-- `temp/outputs/runs/<timestamp>/` — per-run intermediates (search results,
-  JD details, keyword scores, LLM match results, run log).
-- `temp/outputs/applications/{job_id}__.../` — durable per-job artifacts
-  (tailored CV PDF with preserved source header, match analysis, apply URL).
-- `temp/outputs/applications.csv` — master log: which jobs were staged, when,
-  and which have been marked as submitted.
+| Path | What's there |
+|---|---|
+| `profile/profile.md` | Your CV in YAML — the matcher reads this. |
+| `profile/cv_source.pdf` | Your source CV — header preserved on every tailored output. |
+| `temp/outputs/jobs.db` | SQLite store backing the dashboard (persistent across runs). |
+| `temp/outputs/runs/<timestamp>/` | Per-run intermediates: search results, JD details, scores, log. |
+| `temp/outputs/applications/{job_id}__.../` | Durable per-job artifacts: tailored CV PDF, match result, apply URL. |
+| `temp/outputs/applications.csv` | Master log of staged + submitted applications. |
+| `temp/outputs/cache/<job_id>.json` | LinkedIn detail cache (7-day TTL). |
+| `temp/outputs/launchd.log` | Rolling log when the hourly schedule is active. |
 
 ## Tests
 
@@ -243,14 +147,9 @@ tools/linkedin/   → resolve_location, search_jobs, get_job_details
 tools/match/      → extract_skills, score_keyword, score_llm
 tools/cv/         → tailor, render_body_weasy, render_with_source_header
 tools/application/→ draft_cover_letter, draft_ats_answers, stage, mark_submitted
+tools/db/         → schema.sql, store, ingest
+tools/server/     → FastAPI app + pdf_jobs + backfill_jobs
+tools/workflow/   → search (the backfill orchestrator)
 tools/shared/     → http (curl_cffi + Chrome impersonation), skill_dictionary.yml,
                     ats_questions.yml, prompts/*.md
-```
-
-
-
-
-Warmup: 
-```
-.venv/bin/python -m tools.workflow.search --days 4 --threshold 0.7
 ```

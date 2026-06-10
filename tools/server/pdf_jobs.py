@@ -43,14 +43,18 @@ def clear_state(job_id: str) -> None:
 
 
 def _latest_source_pdf(resources_dir: Path) -> Path:
-    """Pick the most recent source CV PDF in temp/resources/.
+    """Return the user's source CV PDF (with QR codes / header to preserve).
 
-    Source filename pattern: gabor-fekete_*.pdf  (the user's existing CV with QR codes).
+    Canonical filename: profile/cv_source.pdf.
     """
-    candidates = sorted(resources_dir.glob("gabor-fekete_*.pdf"))
+    canonical = resources_dir / "cv_source.pdf"
+    if canonical.is_file():
+        return canonical
+    # Back-compat: pick the most recent *.pdf in the directory.
+    candidates = sorted(p for p in resources_dir.glob("*.pdf") if p.is_file())
     if not candidates:
         raise FileNotFoundError(
-            f"no source CV found in {resources_dir} (expected gabor-fekete_*.pdf)"
+            f"no source CV found in {resources_dir} (expected cv_source.pdf)"
         )
     return candidates[-1]
 

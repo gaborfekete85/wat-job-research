@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD_DIR = PROJECT_ROOT / "dashboard"
-PROFILE_PATH = PROJECT_ROOT / "temp" / "resources" / "profile.md"
-RESOURCES_DIR = PROJECT_ROOT / "temp" / "resources"
+PROFILE_DIR = PROJECT_ROOT / "profile"
+PROFILE_PATH = PROFILE_DIR / "profile.md"
 DB_PATH = Path(os.environ.get("WAT_DB_PATH", PROJECT_ROOT / "temp" / "outputs" / "jobs.db"))
 
 
@@ -266,7 +266,7 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
             job_id=job_id,
             db_path=app.state.db_path,
             profile_path=PROFILE_PATH,
-            resources_dir=RESOURCES_DIR,
+            resources_dir=PROFILE_DIR,
         )
         return {"job_id": job_id, "state": "running"}
 

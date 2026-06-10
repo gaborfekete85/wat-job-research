@@ -6,6 +6,12 @@
 # Ephemeral working directory
 temp/
 
+# Personal profile content (the directory itself + README + example are tracked,
+# but the user's actual CV YAML and source PDF stay private by default).
+profile/profile.md
+profile/cv_source.pdf
+profile/*.pdf
+
 # Python virtual environment
 .venv/
 

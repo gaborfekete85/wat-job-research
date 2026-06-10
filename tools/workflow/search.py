@@ -92,7 +92,7 @@ def run_backfill(
     threshold: float = DEFAULT_THRESHOLD,
     max_results: int = DEFAULT_MAX_RESULTS,
     db_path: Path = db_store.DEFAULT_DB_PATH,
-    profile_path: Path = Path("temp/resources/profile.md"),
+    profile_path: Path = Path("profile/profile.md"),
     on_progress: ProgressCb = None,
 ) -> BackfillStats:
     """Search LinkedIn, score keywords, insert only new jobs above threshold.
@@ -198,7 +198,7 @@ def main() -> int:
                    help=f"keyword similarity threshold for inclusion (default {DEFAULT_THRESHOLD})")
     p.add_argument("--max-results", type=int, default=DEFAULT_MAX_RESULTS,
                    help=f"safety cap on results (default {DEFAULT_MAX_RESULTS})")
-    p.add_argument("--profile", default="temp/resources/profile.md")
+    p.add_argument("--profile", default="profile/profile.md")
     p.add_argument("--db", default=str(db_store.DEFAULT_DB_PATH))
     args = p.parse_args()
 

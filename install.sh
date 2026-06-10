@@ -107,7 +107,7 @@ ok "Dependencies installed"
 
 # ── user-specific files (never overwrite) ──────────────────────────────────
 step "4/6  User-specific files (kept private; never overwritten)"
-mkdir -p temp/resources temp/outputs
+mkdir -p profile temp/outputs
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
@@ -116,15 +116,18 @@ else
   ok ".env already exists — kept as-is"
 fi
 
-if [[ ! -f temp/resources/profile.md ]]; then
-  if [[ -f examples/profile.md ]]; then
-    cp examples/profile.md temp/resources/profile.md
-    ok "Created temp/resources/profile.md from examples/profile.md — EDIT THIS with your CV"
-  else
-    warn "examples/profile.md missing in repo — create temp/resources/profile.md manually"
-  fi
+if [[ ! -f profile/profile.md ]]; then
+  cp profile/profile.md.example profile/profile.md
+  ok "Created profile/profile.md from the template — EDIT THIS with your CV"
 else
-  ok "temp/resources/profile.md already exists — kept as-is"
+  ok "profile/profile.md already exists — kept as-is"
+fi
+
+if [[ ! -f profile/cv_source.pdf ]]; then
+  warn "profile/cv_source.pdf not found — drop your existing CV PDF here to enable"
+  warn "  tailored CVs with your header (QR codes / photo / contact preserved)."
+else
+  ok "profile/cv_source.pdf is in place"
 fi
 
 # ── smoke test ──────────────────────────────────────────────────────────────
@@ -143,8 +146,10 @@ step "6/6  Done"
 printf "\n${BOLD}Next steps:${RESET}\n"
 printf "\n${DIM}# Move into the project directory${RESET}\n"
 printf "  cd %s\n" "$INSTALL_DIR"
-printf "\n${DIM}# Replace the placeholder CV with your own${RESET}\n"
-printf "  \$EDITOR temp/resources/profile.md\n"
+printf "\n${DIM}# Fill in YOUR CV details (the placeholder content is generic).${RESET}\n"
+printf "  \$EDITOR profile/profile.md\n"
+printf "\n${DIM}# Drop your existing CV PDF in this directory so tailored CVs preserve its header:${RESET}\n"
+printf "  cp ~/Downloads/your-cv.pdf profile/cv_source.pdf\n"
 printf "\n${DIM}# (Optional) add your Anthropic API key for LLM scoring${RESET}\n"
 printf "  \$EDITOR .env\n"
 printf "\n${DIM}# Set your search preferences in SQLite (location + keywords)${RESET}\n"

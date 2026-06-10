@@ -5,14 +5,13 @@
 > the steps below.
 
 Purpose: Search LinkedIn for jobs matching the user's profile, score each against
-`temp/resources/profile.md`, and stage tailored applications (with the source CV's
+`profile/profile.md`, and stage tailored applications (with the source CV's
 preserved header) for the best matches.
 
 ## Prerequisites
-- `temp/resources/profile.md` exists (the user's structured profile YAML).
-- `temp/resources/gabor-fekete_<TIMESTAMP>.pdf` exists (the source CV whose header —
-  QR codes, photo, contact, LinkedIn/GitHub links — will be preserved on all
-  tailored output). Use the latest one in that folder if multiple exist.
+- `profile/profile.md` exists (the user's structured profile YAML).
+- `profile/cv_source.pdf` exists (the user's existing CV whose header — QR codes,
+  photo, contact, LinkedIn/GitHub links — will be preserved on all tailored output).
 - `.env` contains `ANTHROPIC_API_KEY` (only needed for the LLM scoring step;
   the deterministic phases run without it).
 - Python deps installed: `pip install -e ".[dev]"` (with a working `.venv`).
@@ -70,7 +69,7 @@ declares `packages = []`, so direct script-path invocation breaks the internal
      Drop jobs where `score < filter_cutoff`.
 
    - **LLM scoring (paid, requires ANTHROPIC_API_KEY):**
-     `python -m tools.match.score_llm --profile temp/resources/profile.md --job-details <jd.json> --keyword-result <kw.json>`
+     `python -m tools.match.score_llm --profile profile/profile.md --job-details <jd.json> --keyword-result <kw.json>`
      returns the full structured result including `final_score`, `seniority_fit`,
      `location_fit`, `matched_skills`, `missing_critical`, `reasoning`, and
      `suggested_emphasis`. Attach as `job["llm_score"]` and cache it.
@@ -88,10 +87,10 @@ declares `packages = []`, so direct script-path invocation breaks the internal
 5. **For each accepted job (`final_score ≥ accept_threshold`):**
 
    - **Tailor the CV YAML:**
-     `python -m tools.cv.tailor --profile temp/resources/profile.md --match-result <match.json> -o <APP_DIR>/tailored.yml`
+     `python -m tools.cv.tailor --profile profile/profile.md --match-result <match.json> -o <APP_DIR>/tailored.yml`
 
    - **Render the tailored CV PDF — WITH the source header preserved:**
-     `python -m tools.cv.render_with_source_header --source temp/resources/<source>.pdf --tailored-yml <APP_DIR>/tailored.yml -o <APP_DIR>/tailored_cv.pdf`
+     `python -m tools.cv.render_with_source_header --source profile/cv_source.pdf --tailored-yml <APP_DIR>/tailored.yml -o <APP_DIR>/tailored_cv.pdf`
      (This uses WeasyPrint for the body + pymupdf for the header overlay.)
 
    - **Optional artifacts:**

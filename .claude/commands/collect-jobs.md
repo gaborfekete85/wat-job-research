@@ -65,7 +65,7 @@ flags: $ARGUMENTS
 
 - This task uses ZERO Anthropic API credits (no LLM scoring). Don't
   conflate it with the optional Phase 3 of the full pipeline.
-- If `temp/resources/profile.md` is missing or `.venv/bin/python` doesn't
+- If `profile/profile.md` is missing or `.venv/bin/python` doesn't
   exist, stop and tell the user.
 - If LinkedIn returns 429 (rate-limited), the run aborts cleanly — surface
   the error and suggest waiting an hour before retrying.
