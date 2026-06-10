@@ -1,8 +1,12 @@
-"""Rate-limited HTTP GET wrapper for LinkedIn public endpoints."""
+"""Rate-limited HTTP GET wrapper for LinkedIn public endpoints.
+
+Uses curl_cffi with Chrome impersonation because LinkedIn (Cloudflare) TLS-
+fingerprints stock Python requests and silently returns empty HTML.
+"""
 from __future__ import annotations
 import os, time
 from dataclasses import dataclass
-import requests
+from curl_cffi import requests
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -10,6 +14,7 @@ DEFAULT_UA = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 DEFAULT_THROTTLE_S = 1.5
+IMPERSONATE = "chrome"
 
 @dataclass
 class _State:
@@ -21,7 +26,7 @@ _state = _State()
 def set_throttle(seconds: float) -> None:
     _state.throttle_s = seconds
 
-def get(url: str, *, accept: str = "text/html,*/*;q=0.8") -> requests.Response:
+def get(url: str, *, accept: str = "text/html,*/*;q=0.8"):
     elapsed = time.monotonic() - _state.last_call
     if elapsed < _state.throttle_s:
         time.sleep(_state.throttle_s - elapsed)
@@ -31,6 +36,6 @@ def get(url: str, *, accept: str = "text/html,*/*;q=0.8") -> requests.Response:
         "Accept-Language": "en-US,en;q=0.9",
     }
     try:
-        return requests.get(url, headers=headers, timeout=20)
+        return requests.get(url, headers=headers, timeout=20, impersonate=IMPERSONATE)
     finally:
         _state.last_call = time.monotonic()
