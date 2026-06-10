@@ -30,6 +30,7 @@ def get(url: str, *, accept: str = "text/html,*/*;q=0.8") -> requests.Response:
         "Accept": accept,
         "Accept-Language": "en-US,en;q=0.9",
     }
-    resp = requests.get(url, headers=headers, timeout=20)
-    _state.last_call = time.monotonic()
-    return resp
+    try:
+        return requests.get(url, headers=headers, timeout=20)
+    finally:
+        _state.last_call = time.monotonic()
