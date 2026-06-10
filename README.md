@@ -87,6 +87,119 @@ column.
 | `GET /api/jobs/{id}/pdf-status` | poll PDF render progress (`idle` / `running` / `done` / `error:…`) |
 | `GET /pdfs/{id}.pdf` | download the staged tailored CV |
 
+## Scheduling — run the backfill automatically every hour
+
+The recommended path is a **local launchd agent on macOS**. The remote-routine
+system in Claude Code (see "Alternatives" below) doesn't fit because this
+project's state (SQLite DB, cache, dashboard) lives on your laptop — a cloud
+sandbox can't reach any of it.
+
+### One-time setup (macOS)
+
+1. **The wrapper script is already in the repo:** [`scripts/collect-jobs-hourly.sh`](scripts/collect-jobs-hourly.sh).
+   It `cd`s to the project root, sources `.env`, and runs
+   `python -m tools.workflow.search "$@"` — logging to `temp/outputs/launchd.log`.
+
+   Make sure it's executable:
+   ```bash
+   chmod +x scripts/collect-jobs-hourly.sh
+   ```
+
+2. **Create the launchd plist.** Open `~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist`
+   and paste:
+
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+   <plist version="1.0">
+   <dict>
+       <key>Label</key>
+       <string>com.feketegabor.wat-collect-jobs</string>
+
+       <key>ProgramArguments</key>
+       <array>
+           <string>/bin/bash</string>
+           <string>/Users/gaborfekete/my-projects/my-agent/wat-frameworks/job-search/scripts/collect-jobs-hourly.sh</string>
+       </array>
+
+       <!-- Fire every 3600 seconds = 1 hour while the laptop is awake.
+            If the laptop is asleep at the scheduled tick, launchd will fire
+            once on wake instead of catching up multiple times. -->
+       <key>StartInterval</key>
+       <integer>3600</integer>
+
+       <!-- Don't run on plist load — the user runs it manually first to
+            confirm the wrapper works, then trusts the hourly cadence. -->
+       <key>RunAtLoad</key>
+       <false/>
+
+       <key>StandardOutPath</key>
+       <string>/Users/gaborfekete/my-projects/my-agent/wat-frameworks/job-search/temp/outputs/launchd.out.log</string>
+
+       <key>StandardErrorPath</key>
+       <string>/Users/gaborfekete/my-projects/my-agent/wat-frameworks/job-search/temp/outputs/launchd.err.log</string>
+   </dict>
+   </plist>
+   ```
+
+   Replace the absolute paths if your project lives somewhere else.
+
+3. **Load it:**
+   ```bash
+   launchctl load ~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist
+   ```
+
+4. **Sanity-test it once, manually:**
+   ```bash
+   launchctl start com.feketegabor.wat-collect-jobs
+   tail -f temp/outputs/launchd.log
+   ```
+   You should see a `/collect-jobs` block appended, ending with the stats line.
+
+### Managing the schedule
+
+```bash
+# Confirm it's loaded (look for the Label in the output)
+launchctl list | grep wat-collect-jobs
+
+# Fire it on demand
+launchctl start com.feketegabor.wat-collect-jobs
+
+# Live-tail the rolling log
+tail -f temp/outputs/launchd.log
+
+# Stop it temporarily (unload — survives until you reload)
+launchctl unload ~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist
+
+# Re-arm it
+launchctl load ~/Library/LaunchAgents/com.feketegabor.wat-collect-jobs.plist
+
+# Change the cadence: edit StartInterval (seconds) in the plist, then
+# unload + load again to pick up the change.
+```
+
+### What happens on each run
+
+1. Wrapper sources `.env` and `cd`s to the project root.
+2. `python -m tools.workflow.search` runs with the **saved DB preferences**
+   (`keywords`, `location`, `location_geo_id`) and **default threshold 0.5**.
+3. New jobs land in NEW (or FILTERED_OUT for below-threshold). Existing job IDs
+   are skipped untouched — your triage state survives every run.
+4. The dashboard at `http://localhost:8765` auto-refreshes every 5 seconds, so
+   new rows appear without a manual reload.
+
+Cost per run: **$0** (the backfill is pure regex + arithmetic; no Anthropic API).
+Typical wall-clock: 1–4 minutes depending on cache hits.
+
+### Alternatives (and why they don't fit as cleanly)
+
+| Option | When it makes sense | Why we didn't pick it |
+|---|---|---|
+| **Claude Code remote routine** (`/schedule`) | Project state lives in cloud (GitHub, hosted DB, public APIs). | Remote sandbox can't reach our local SQLite, local cache, or `localhost:8765`. |
+| **`/loop /collect-jobs 1h`** | You keep a Claude session open all day anyway. | Stops the moment the Claude session closes. |
+| **`crontab -e` with `0 * * * *`** | Linux server, or you prefer the classic cron syntax. | Equivalent to launchd on macOS — just less native. Pick whichever you're more comfortable maintaining. |
+
 ## Where artifacts go
 
 - `temp/outputs/runs/<timestamp>/` — per-run intermediates (search results,
@@ -111,4 +224,12 @@ tools/cv/         → tailor, render_body_weasy, render_with_source_header
 tools/application/→ draft_cover_letter, draft_ats_answers, stage, mark_submitted
 tools/shared/     → http (curl_cffi + Chrome impersonation), skill_dictionary.yml,
                     ats_questions.yml, prompts/*.md
+```
+
+
+
+
+Warmup: 
+```
+.venv/bin/python -m tools.workflow.search --days 4 --threshold 0.7
 ```
