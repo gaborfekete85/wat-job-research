@@ -1,0 +1,147 @@
+"""Tests for tools/db/store.py — sqlite-backed jobs table."""
+from __future__ import annotations
+import json
+from pathlib import Path
+
+import pytest
+
+from tools.db import store
+
+
+@pytest.fixture()
+def db(tmp_path):
+    conn = store.init_db(tmp_path / "jobs.db")
+    yield conn
+    conn.close()
+
+
+def _sample_job(**overrides):
+    job = {
+        "job_id": "1234",
+        "title": "Senior Eng",
+        "company": "Acme",
+        "location": "Zurich",
+        "url": "https://x/y",
+        "description": "We need a senior engineer.",
+        "apply_url": "https://x/apply",
+        "keyword_score": {"score": 0.6, "matched": ["AWS"], "missing": ["Rust"], "jd_skills": ["AWS", "Rust"]},
+    }
+    job.update(overrides)
+    return job
+
+
+def test_upsert_creates_row_with_status_new(db):
+    store.upsert_job(db, _sample_job())
+    row = store.get_job(db, "1234")
+    assert row is not None
+    assert row["status"] == "new"
+    assert row["title"] == "Senior Eng"
+    assert row["keyword_score"] == 0.6
+    assert row["llm_final_score"] is None
+    assert row["match_result_json"] is None
+    assert row["tailored_pdf_path"] is None
+    assert row["discovered_at"]
+    assert row["viewed_at"] is None
+
+
+def test_upsert_is_idempotent_on_same_id(db):
+    store.upsert_job(db, _sample_job())
+    discovered_at = store.get_job(db, "1234")["discovered_at"]
+
+    # Modify and re-upsert
+    store.upsert_job(db, _sample_job(title="Senior Eng II"))
+    row = store.get_job(db, "1234")
+
+    # No duplicate, content updated, discovered_at preserved
+    all_rows = store.list_jobs(db)
+    assert len(all_rows) == 1
+    assert row["title"] == "Senior Eng II"
+    assert row["discovered_at"] == discovered_at
+
+
+def test_upsert_preserves_status_on_update(db):
+    store.upsert_job(db, _sample_job())
+    store.set_status(db, "1234", "viewed")
+    assert store.get_job(db, "1234")["status"] == "viewed"
+
+    # Re-ingest the same job — status must NOT flip back to 'new'
+    store.upsert_job(db, _sample_job(title="Senior Eng II"))
+    row = store.get_job(db, "1234")
+    assert row["status"] == "viewed"
+    assert row["title"] == "Senior Eng II"
+
+
+def test_upsert_attaches_llm_score_when_present(db):
+    job = _sample_job()
+    job["llm_score"] = {
+        "final_score": 0.82,
+        "skills_match": 0.9,
+        "seniority_fit": "fit",
+        "matched_skills": ["AWS"],
+        "missing_critical": [],
+        "reasoning": "Strong match.",
+        "suggested_emphasis": {"tailored_summary": "..."},
+    }
+    store.upsert_job(db, job)
+    row = store.get_job(db, "1234")
+    assert row["llm_final_score"] == 0.82
+    parsed = json.loads(row["match_result_json"])
+    assert parsed["seniority_fit"] == "fit"
+
+
+def test_upsert_does_not_clobber_llm_score_with_null(db):
+    job = _sample_job()
+    job["llm_score"] = {"final_score": 0.82, "reasoning": "ok"}
+    store.upsert_job(db, job)
+    assert store.get_job(db, "1234")["llm_final_score"] == 0.82
+
+    # Re-upsert WITHOUT an llm_score — must keep the existing one
+    store.upsert_job(db, _sample_job())
+    assert store.get_job(db, "1234")["llm_final_score"] == 0.82
+
+
+def test_set_status_validates_value(db):
+    store.upsert_job(db, _sample_job())
+    with pytest.raises(ValueError):
+        store.set_status(db, "1234", "bogus")
+
+
+def test_set_status_stamps_timestamps(db):
+    store.upsert_job(db, _sample_job())
+    store.set_status(db, "1234", "viewed")
+    row = store.get_job(db, "1234")
+    assert row["viewed_at"]
+    assert row["staged_at"] is None
+
+    store.set_status(db, "1234", "staged")
+    row = store.get_job(db, "1234")
+    assert row["staged_at"]
+
+
+def test_set_status_does_not_reset_existing_timestamp(db):
+    store.upsert_job(db, _sample_job())
+    store.set_status(db, "1234", "viewed")
+    first_viewed_at = store.get_job(db, "1234")["viewed_at"]
+
+    # Re-set to viewed — viewed_at must stay at the original timestamp
+    store.set_status(db, "1234", "viewed")
+    assert store.get_job(db, "1234")["viewed_at"] == first_viewed_at
+
+
+def test_list_jobs_filters_by_status(db):
+    store.upsert_job(db, _sample_job(job_id="1"))
+    store.upsert_job(db, _sample_job(job_id="2"))
+    store.upsert_job(db, _sample_job(job_id="3"))
+    store.set_status(db, "2", "viewed")
+
+    assert {j["id"] for j in store.list_jobs(db, status="new")} == {"1", "3"}
+    assert {j["id"] for j in store.list_jobs(db, status="viewed")} == {"2"}
+    assert len(store.list_jobs(db)) == 3
+
+
+def test_set_tailored_pdf(db, tmp_path):
+    store.upsert_job(db, _sample_job())
+    pdf = tmp_path / "tailored.pdf"
+    pdf.write_bytes(b"%PDF")
+    store.set_tailored_pdf(db, "1234", pdf)
+    assert store.get_job(db, "1234")["tailored_pdf_path"] == str(pdf)

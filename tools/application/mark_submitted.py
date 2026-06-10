@@ -1,11 +1,13 @@
 """Mark a staged application as submitted. Idempotent — refuses if already marked."""
 from __future__ import annotations
-import argparse, csv, json, sys
+import argparse, csv, json, logging, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 APPS_ROOT = Path("temp/outputs/applications")
 CSV_PATH = APPS_ROOT / "applications.csv"
+
+log = logging.getLogger(__name__)
 
 def _find_folder(job_id: str) -> Path:
     matches = list(APPS_ROOT.glob(f"{job_id}__*"))
@@ -30,6 +32,18 @@ def mark_submitted(job_id: str, notes: str | None = None) -> str:
                 r[5] = now
         with CSV_PATH.open("w", newline="") as f:
             w = csv.writer(f); w.writerow(header); w.writerows(data)
+
+    # Mirror to SQLite for the dashboard. Guarded — CSV is durable source of truth.
+    try:
+        from tools.db import store as db_store
+        conn = db_store.init_db(db_store.DEFAULT_DB_PATH)
+        try:
+            db_store.set_status(conn, job_id, "submitted")
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("DB mirror failed for submitted job %s — CSV log is intact", job_id, exc_info=True)
+
     return str(folder)
 
 def main() -> int:

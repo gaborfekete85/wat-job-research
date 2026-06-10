@@ -17,6 +17,17 @@ Open this directory in Claude Desktop and ask:
 Claude reads [workflows/find-and-apply-jobs.md](workflows/find-and-apply-jobs.md)
 and orchestrates the individual tools step by step.
 
+## Dashboard
+
+```bash
+python -m tools.server
+```
+
+Then open [http://localhost:8765](http://localhost:8765) — a three-column dashboard
+(NEW / VIEWED / STAGED) backed by SQLite at `temp/outputs/jobs.db`. Click
+**Generate PDF** on a job that already has an LLM match score to trigger
+the tailor + render pipeline; the resulting CV is opened in a new tab.
+
 ## Where artifacts go
 
 - `temp/outputs/runs/<timestamp>/` — per-run intermediates (search results,

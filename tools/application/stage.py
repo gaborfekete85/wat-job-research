@@ -1,12 +1,14 @@
 """Stage an application: create per-job folder, copy artifacts, append CSV row."""
 from __future__ import annotations
-import argparse, csv, json, re, shutil, sys
+import argparse, csv, json, logging, re, shutil, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 APPS_ROOT = Path("temp/outputs/applications")
 CSV_PATH = APPS_ROOT / "applications.csv"
 CSV_HEADER = ["job_id", "company", "title", "status", "staged_at", "submitted_at", "folder"]
+
+log = logging.getLogger(__name__)
 
 def _slug(s: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -40,6 +42,24 @@ def stage_application(job: dict, *, cv_pdf: Path,
         if new_file: w.writerow(CSV_HEADER)
         w.writerow([job_id, job.get("company") or "", job.get("title") or "",
                     "staged", datetime.now(timezone.utc).isoformat(), "", str(folder)])
+
+    # Mirror to SQLite for the dashboard. Guarded — the CSV log is the durable
+    # source of truth; a DB write failure must NOT break staging.
+    try:
+        from tools.db import store as db_store
+        conn = db_store.init_db(db_store.DEFAULT_DB_PATH)
+        try:
+            existing = db_store.get_job(conn, job_id)
+            if existing is None:
+                # Upsert a minimal row from the job dict so the dashboard sees it.
+                db_store.upsert_job(conn, {**job, "url": job.get("url") or ""})
+            db_store.set_tailored_pdf(conn, job_id, folder / "tailored_cv.pdf")
+            db_store.set_status(conn, job_id, "staged")
+        finally:
+            conn.close()
+    except Exception:
+        log.warning("DB mirror failed for staged job %s — CSV log is intact", job_id, exc_info=True)
+
     return str(folder)
 
 def main() -> int:

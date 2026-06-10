@@ -65,6 +65,16 @@ declares `packages = []`, so direct script-path invocation breaks the internal
      `location_fit`, `matched_skills`, `missing_critical`, `reasoning`, and
      `suggested_emphasis`. Attach as `job["llm_score"]` and cache it.
 
+   Write the per-job results to `<RUN_DIR>/jobs_matched.json` (one array, all scored
+   jobs including those above and below `accept_threshold`).
+
+4b. **Ingest scored jobs into the dashboard DB.**
+   `python -m tools.db.ingest --jobs <RUN_DIR>/jobs_matched.json`
+   Upserts every scored job into `temp/outputs/jobs.db`. New jobs land with
+   `status='new'`. Jobs already in the DB keep their existing status (so
+   previously-viewed jobs stay in the VIEWED column) but get their content +
+   scores refreshed.
+
 5. **For each accepted job (`final_score ≥ accept_threshold`):**
 
    - **Tailor the CV YAML:**
@@ -87,13 +97,22 @@ declares `packages = []`, so direct script-path invocation breaks the internal
    - search count, filter-pass count, LLM-scored count, accepted count, staged count
    - For each staged job: print the apply URL and the mark-submitted command:
      `python -m tools.application.mark_submitted <job_id> --notes "..."`
+   - Remind the user the dashboard is available — see step 7.
+
+7. **(Optional) Open the dashboard.** `python -m tools.server` then visit
+   `http://localhost:8765`. The dashboard reads `temp/outputs/jobs.db` and lets the
+   user trigger the same `tailor` + `render_with_source_header` + `stage_application`
+   pipeline from a "Generate PDF" button (button is disabled for jobs without an
+   LLM score; if so, ask Claude to run LLM scoring first).
 
 ## When the API key isn't available
 
 Claude should still run steps 1-4 (everything up to the keyword pre-filter is
-deterministic and free) and present the candidate list to the user. The user can
-then ask Claude to hand-craft a `match.json` with `suggested_emphasis` for specific
-high-interest jobs, then proceed to step 5 to render the tailored CVs.
+deterministic and free) and present the candidate list to the user. Then run step 4b
+with `jobs_filtered.json` (the keyword-only result, no LLM scores) so the dashboard
+shows the jobs with "needs LLM" badges. The user can then ask Claude to hand-craft
+a `match.json` with `suggested_emphasis` for specific high-interest jobs, then
+proceed to step 5 to render the tailored CVs.
 
 ## Outputs
 
@@ -104,3 +123,5 @@ high-interest jobs, then proceed to step 5 to render the tailored CVs.
   cover_letter.md / ats_answers.md, apply_url.txt, submitted.json after marking).
 - `temp/outputs/applications.csv` — master log.
 - `temp/outputs/cache/<job_id>.json` — cache (7-day TTL).
+- `temp/outputs/jobs.db` — SQLite store backing the dashboard (one row per discovered
+  job, persistent across runs).
