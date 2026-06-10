@@ -26,7 +26,8 @@ those values as defaults; ask the user only if a preference is missing/empty.
 
 | Flag | Source | Default | Notes |
 |---|---|---|---|
-| `location` | DB preference `location` | "Zurich, Switzerland" | Resolved via LinkedIn typeahead → geoId |
+| `location` | DB preference `location` | "Zurich, Switzerland" | Resolved via LinkedIn typeahead → geoId at run time |
+| `location_geo_id` | DB preference `location_geo_id` (optional) | none | When set (via dashboard confirm-on-pick), use directly and skip resolve_location |
 | `keywords` | DB preference `keywords` | "ai OR software developer OR consultant" | LinkedIn supports OR boolean |
 | `posted_within_hours` | CLI arg / ask | 72 | LinkedIn `f_TPR` filter |
 | `limit` | CLI arg / ask | 15 | Max jobs to fetch |
@@ -45,9 +46,13 @@ declares `packages = []`, so direct script-path invocation breaks the internal
    Use that as `RUN_DIR` for intermediates.
 
 2. **Resolve the location** → geoId.
-   `python -m tools.linkedin.resolve_location "<location>" --pick-first` → save the
-   `id` field as `geo_id`. If multiple Switzerland entries exist in the non-`--pick-first`
-   form, prefer the displayName the user means (Zurich vs Zürich Metropolitan Area).
+   - **If the DB preference `location_geo_id` is set, use it directly — skip
+     the typeahead call.** This is the dashboard's confirm-on-pick result; the
+     user has already disambiguated.
+   - Otherwise, run `python -m tools.linkedin.resolve_location "<location>" --pick-first`
+     and save the `id` field as `geo_id`. If multiple Switzerland entries exist
+     in the non-`--pick-first` form, prefer the displayName the user means
+     (Zurich vs Zürich Metropolitan Area).
 
 3. **Search jobs.**
    `python -m tools.linkedin.search_jobs --keywords "<kw>" --geo-id <geo_id> --posted-within-hours <N> --limit <L> -o <RUN_DIR>/jobs_raw.json`

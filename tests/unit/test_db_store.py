@@ -184,3 +184,31 @@ def test_set_preference_rejects_empty_value(db):
 def test_set_preference_trims_whitespace(db):
     store.set_preference(db, "keywords", "  ai OR consultant  ")
     assert store.get_preferences(db)["keywords"] == "ai OR consultant"
+
+
+def test_location_geo_id_is_optional_and_storable(db):
+    # No default for location_geo_id — absent from defaults
+    assert "location_geo_id" not in store.get_preferences(db)
+    store.set_preference(db, "location_geo_id", "107814425")
+    assert store.get_preferences(db)["location_geo_id"] == "107814425"
+
+
+def test_location_geo_id_clearable_with_none(db):
+    store.set_preference(db, "location_geo_id", "107814425")
+    store.set_preference(db, "location_geo_id", None)
+    assert "location_geo_id" not in store.get_preferences(db)
+
+
+def test_location_geo_id_clearable_with_empty_string(db):
+    store.set_preference(db, "location_geo_id", "107814425")
+    store.set_preference(db, "location_geo_id", "")
+    assert "location_geo_id" not in store.get_preferences(db)
+
+
+def test_defaultable_key_cannot_be_cleared(db):
+    # Clearing 'keywords' or 'location' would surprise the user by silently
+    # reverting to defaults — disallow that path.
+    with pytest.raises(ValueError, match="non-empty"):
+        store.set_preference(db, "keywords", None)
+    with pytest.raises(ValueError, match="non-empty"):
+        store.set_preference(db, "location", "")

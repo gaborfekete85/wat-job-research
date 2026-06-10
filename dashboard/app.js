@@ -25,6 +25,11 @@ const api = {
     }
     return r.json();
   },
+  async typeaheadLocations(q) {
+    const r = await fetch(`/api/locations/typeahead?q=${encodeURIComponent(q)}`);
+    if (!r.ok) throw new Error(`typeahead: ${r.status}`);
+    return r.json();
+  },
   async listJobs() {
     const r = await fetch("/api/jobs");
     if (!r.ok) throw new Error(`list: ${r.status}`);
@@ -176,13 +181,86 @@ function Column({ title, accent, jobs, expandedJobId, jobDetails, pdfStates, onV
     </div>`;
 }
 
+function LocationCombobox({ value, geoId, onChange }) {
+  // Controlled component. onChange(displayName, geoId | null) — emits null geoId
+  // when the user types freely without picking from the dropdown.
+  const [hits, setHits] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef(null);
+
+  const fetchHits = useCallback(async (q) => {
+    if (q.trim().length < 2) {
+      setHits([]); return;
+    }
+    setLoading(true);
+    try {
+      const data = await api.typeaheadLocations(q);
+      setHits(data);
+    } catch {
+      setHits([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const onInput = (e) => {
+    const next = e.target.value;
+    // User typed → invalidate previous geoId match
+    onChange(next, null);
+    setOpen(true);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchHits(next), 300);
+  };
+
+  const pickHit = (hit) => {
+    onChange(hit.displayName, hit.id);
+    setHits([]);
+    setOpen(false);
+  };
+
+  return html`
+    <div className="relative">
+      <input
+        type="text"
+        value=${value}
+        onChange=${onInput}
+        onFocus=${() => { if (hits.length) setOpen(true); }}
+        onBlur=${() => setTimeout(() => setOpen(false), 200)}
+        placeholder="Start typing a city, e.g. Zurich"
+        className="w-full px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      ${geoId ? html`
+        <span className="absolute right-2 top-2 text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+          ✓ confirmed (geoId ${geoId})
+        </span>` : null}
+      ${open && (hits.length > 0 || loading) ? html`
+        <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-64 overflow-y-auto">
+          ${loading ? html`<div className="px-3 py-2 text-xs text-slate-400">Loading…</div>` : null}
+          ${hits.map(h => html`
+            <button
+              key=${h.id}
+              type="button"
+              onMouseDown=${(e) => { e.preventDefault(); pickHit(h); }}
+              className="w-full text-left px-3 py-2 text-sm hover:bg-slate-100 border-b border-slate-100 last:border-b-0">
+              <span className="font-medium">${h.displayName}</span>
+              <span className="text-xs text-slate-400 ml-2">${h.id}</span>
+            </button>`)}
+        </div>` : null}
+    </div>`;
+}
+
 function PreferencesPanel({ prefs, onSave }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({ keywords: "", location: "" });
+  const [draft, setDraft] = useState({ keywords: "", location: "", location_geo_id: null });
   const [saving, setSaving] = useState(false);
 
   const startEdit = () => {
-    setDraft({ keywords: prefs.keywords || "", location: prefs.location || "" });
+    setDraft({
+      keywords: prefs.keywords || "",
+      location: prefs.location || "",
+      location_geo_id: prefs.location_geo_id || null,
+    });
     setEditing(true);
   };
 
@@ -191,7 +269,11 @@ function PreferencesPanel({ prefs, onSave }) {
   const save = async () => {
     setSaving(true);
     try {
-      await onSave(draft);
+      await onSave({
+        keywords: draft.keywords,
+        location: draft.location,
+        location_geo_id: draft.location_geo_id,  // null clears the row on the server
+      });
       setEditing(false);
     } finally {
       setSaving(false);
@@ -221,17 +303,17 @@ function PreferencesPanel({ prefs, onSave }) {
             />
             <span className="text-xs text-slate-400">LinkedIn supports OR boolean syntax</span>
           </label>
-          <label className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1">
             <span className="text-xs text-slate-500 font-medium">Location</span>
-            <input
-              type="text"
+            <${LocationCombobox}
               value=${draft.location}
-              onChange=${e => setDraft({ ...draft, location: e.target.value })}
-              placeholder="e.g. Zurich, Switzerland"
-              className="px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              geoId=${draft.location_geo_id}
+              onChange=${(loc, gid) => setDraft({ ...draft, location: loc, location_geo_id: gid })}
             />
-            <span className="text-xs text-slate-400">Include the country to avoid ambiguity (e.g. Zurich exists in Canada too)</span>
-          </label>
+            ${draft.location_geo_id
+              ? html`<span className="text-xs text-emerald-700">Locked to LinkedIn geoId — the workflow will use this exact location.</span>`
+              : html`<span className="text-xs text-amber-700">⚠ No LinkedIn confirmation. The workflow will resolve at run time and may pick the wrong place (e.g. Zurich, Canada).</span>`}
+          </div>
         </div>
         <div className="flex gap-2 mt-3">
           <button
@@ -259,7 +341,12 @@ function PreferencesPanel({ prefs, onSave }) {
         </div>
         <div className="text-sm">
           <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">Location</span>
-          <div className="font-mono text-slate-800 truncate">${prefs.location}</div>
+          <div className="font-mono text-slate-800 truncate">
+            ${prefs.location}
+            ${prefs.location_geo_id
+              ? html`<span className="ml-2 text-xs text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">✓ ${prefs.location_geo_id}</span>`
+              : html`<span className="ml-2 text-xs text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">unconfirmed</span>`}
+          </div>
         </div>
       </div>
       <button

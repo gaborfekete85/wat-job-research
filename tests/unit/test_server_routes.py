@@ -192,3 +192,50 @@ def test_put_preferences_rejects_empty_value(test_app):
     client, _ = test_app
     r = client.put("/api/preferences", json={"keywords": "   "})
     assert r.status_code == 400
+
+
+def test_put_preferences_clears_location_geo_id_with_null(test_app):
+    client, _ = test_app
+    client.put("/api/preferences", json={"location_geo_id": "107814425"})
+    assert client.get("/api/preferences").json()["location_geo_id"] == "107814425"
+
+    # Now clear it
+    r = client.put("/api/preferences", json={"location_geo_id": None})
+    assert r.status_code == 200
+    assert "location_geo_id" not in r.json()
+
+
+# ── Location typeahead ──────────────────────────────────────────────────────
+
+
+def test_location_typeahead_returns_resolved_hits(test_app, monkeypatch):
+    from tools.server import app as server_app
+    monkeypatch.setattr(server_app.resolve_location, "resolve", lambda q: [
+        {"id": "107814425", "displayName": "Zurich, Zurich, Switzerland"},
+        {"id": "102799079", "displayName": "Zurich, Ontario, Canada"},
+    ])
+    client, _ = test_app
+    r = client.get("/api/locations/typeahead?q=Zurich")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 2
+    assert body[0]["id"] == "107814425"
+
+
+def test_location_typeahead_empty_for_short_query(test_app):
+    client, _ = test_app
+    r = client.get("/api/locations/typeahead?q=Z")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_location_typeahead_502_on_upstream_failure(test_app, monkeypatch):
+    from tools.server import app as server_app
+
+    def boom(q):
+        raise RuntimeError("LinkedIn rate-limited")
+    monkeypatch.setattr(server_app.resolve_location, "resolve", boom)
+
+    client, _ = test_app
+    r = client.get("/api/locations/typeahead?q=Zurich")
+    assert r.status_code == 502

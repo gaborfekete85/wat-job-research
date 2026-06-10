@@ -169,6 +169,11 @@ DEFAULT_PREFERENCES = {
     "location": "Zurich, Switzerland",
 }
 
+# All preference keys we accept. `location_geo_id` has no default — it's set
+# only when the user picks a LinkedIn typeahead match; absence means the
+# workflow falls back to free-text resolution at run time.
+VALID_PREFERENCE_KEYS = {*DEFAULT_PREFERENCES.keys(), "location_geo_id"}
+
 
 def get_preferences(conn: sqlite3.Connection) -> dict[str, str]:
     """Return all stored preferences merged on top of DEFAULT_PREFERENCES."""
@@ -177,14 +182,28 @@ def get_preferences(conn: sqlite3.Connection) -> dict[str, str]:
     return {**DEFAULT_PREFERENCES, **stored}
 
 
-def set_preference(conn: sqlite3.Connection, key: str, value: str) -> None:
-    """Upsert a single preference key. Validates the key is in DEFAULT_PREFERENCES."""
-    if key not in DEFAULT_PREFERENCES:
+def set_preference(conn: sqlite3.Connection, key: str, value: str | None) -> None:
+    """Upsert (or clear, with None) a single preference key.
+
+    Validates against VALID_PREFERENCE_KEYS. Setting `value` to None or an empty
+    string clears the stored row (useful for invalidating `location_geo_id` when
+    the user types a custom location without picking from typeahead).
+    """
+    if key not in VALID_PREFERENCE_KEYS:
         raise ValueError(
-            f"unknown preference key {key!r}; allowed: {sorted(DEFAULT_PREFERENCES)}"
+            f"unknown preference key {key!r}; allowed: {sorted(VALID_PREFERENCE_KEYS)}"
         )
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"preference {key!r} must be a non-empty string")
+    # Clear path: explicit None or empty string deletes the row.
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if key in DEFAULT_PREFERENCES:
+            # Keys with defaults must always have a non-empty value — clearing
+            # them would surprise the user by silently reverting to defaults.
+            raise ValueError(f"preference {key!r} must be a non-empty string")
+        conn.execute("DELETE FROM preferences WHERE key = ?", (key,))
+        conn.commit()
+        return
+    if not isinstance(value, str):
+        raise ValueError(f"preference {key!r} must be a string, got {type(value).__name__}")
     conn.execute(
         "INSERT INTO preferences (key, value, updated_at) VALUES (?, ?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",

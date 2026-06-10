@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from tools.db import store as db_store
+from tools.linkedin import resolve_location
 from tools.server import pdf_jobs
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,9 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
 
     @app.put("/api/preferences")
     def update_prefs(payload: dict) -> dict:
+        """Accepts a partial dict of preferences. A null/empty value on a
+        clearable key (e.g. `location_geo_id`) deletes that row.
+        """
         conn = _conn()
         try:
             errors = {}
@@ -77,6 +81,20 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
             return db_store.get_preferences(conn)
         finally:
             conn.close()
+
+    @app.get("/api/locations/typeahead")
+    def location_typeahead(q: str) -> list[dict]:
+        """Proxy LinkedIn's public typeahead so the dashboard can show a
+        confirm-on-pick dropdown. Returns top 10 hits with id + displayName.
+        """
+        q = (q or "").strip()
+        if len(q) < 2:
+            return []
+        try:
+            return resolve_location.resolve(q)
+        except Exception as e:
+            log.warning("typeahead failed for %r: %s", q, e)
+            raise HTTPException(502, detail={"error": "typeahead_failed", "message": str(e)})
 
     @app.get("/api/jobs")
     def list_jobs() -> dict:
