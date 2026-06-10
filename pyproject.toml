@@ -1,6 +1,10 @@
 [project]
-name = "wat-job-search"
+name = "wat-job-research"
 version = "0.1.0"
+description = "Automated LinkedIn job research with tailored CV generation, run from Claude Desktop"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Gabor Fekete" }]
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",
