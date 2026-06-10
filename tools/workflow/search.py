@@ -28,7 +28,7 @@ from tools.match.score_keyword import score as score_keyword
 log = logging.getLogger(__name__)
 
 DEFAULT_DAYS_BACK = 4
-DEFAULT_THRESHOLD = 0.7
+DEFAULT_THRESHOLD = 0.5            # below this keyword score, jobs go to filtered_out
 DEFAULT_MAX_RESULTS = 500          # safety cap; LinkedIn rarely returns this much
 CACHE_DIR = Path("temp/outputs/cache")
 

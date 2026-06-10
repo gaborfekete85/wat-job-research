@@ -439,7 +439,7 @@ function PreferencesPanel({ prefs, onSave }) {
 function BackfillPanel({ onRefreshJobs }) {
   // Self-contained: triggers /api/workflow/search and polls /api/workflow/status.
   const [days, setDays] = useState(4);
-  const [threshold, setThreshold] = useState(0.7);
+  const [threshold, setThreshold] = useState(0.5);
   const [status, setStatus] = useState({ state: "idle" });
   const pollingRef = useRef(false);
 
