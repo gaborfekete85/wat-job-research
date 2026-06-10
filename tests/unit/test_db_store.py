@@ -145,3 +145,42 @@ def test_set_tailored_pdf(db, tmp_path):
     pdf.write_bytes(b"%PDF")
     store.set_tailored_pdf(db, "1234", pdf)
     assert store.get_job(db, "1234")["tailored_pdf_path"] == str(pdf)
+
+
+# ── Preferences ──────────────────────────────────────────────────────────────
+
+
+def test_get_preferences_returns_defaults_when_empty(db):
+    prefs = store.get_preferences(db)
+    assert prefs["keywords"] == store.DEFAULT_PREFERENCES["keywords"]
+    assert prefs["location"] == store.DEFAULT_PREFERENCES["location"]
+
+
+def test_set_preference_overrides_default(db):
+    store.set_preference(db, "location", "Geneva, Switzerland")
+    prefs = store.get_preferences(db)
+    assert prefs["location"] == "Geneva, Switzerland"
+    # Other keys still come from defaults
+    assert prefs["keywords"] == store.DEFAULT_PREFERENCES["keywords"]
+
+
+def test_set_preference_is_idempotent_upsert(db):
+    store.set_preference(db, "location", "Geneva, Switzerland")
+    store.set_preference(db, "location", "Lausanne, Switzerland")
+    prefs = store.get_preferences(db)
+    assert prefs["location"] == "Lausanne, Switzerland"
+
+
+def test_set_preference_rejects_unknown_key(db):
+    with pytest.raises(ValueError, match="unknown preference"):
+        store.set_preference(db, "made_up_key", "value")
+
+
+def test_set_preference_rejects_empty_value(db):
+    with pytest.raises(ValueError, match="non-empty"):
+        store.set_preference(db, "keywords", "   ")
+
+
+def test_set_preference_trims_whitespace(db):
+    store.set_preference(db, "keywords", "  ai OR consultant  ")
+    assert store.get_preferences(db)["keywords"] == "ai OR consultant"

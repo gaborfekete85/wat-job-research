@@ -153,3 +153,42 @@ def test_pdfs_endpoint_404_when_no_path(test_app):
     _seed(db_path)
     r = client.get("/pdfs/100.pdf")
     assert r.status_code == 404
+
+
+# ── Preferences ──────────────────────────────────────────────────────────────
+
+
+def test_get_preferences_returns_defaults(test_app):
+    client, _ = test_app
+    r = client.get("/api/preferences")
+    assert r.status_code == 200
+    body = r.json()
+    assert "keywords" in body
+    assert "location" in body
+    assert body["location"] == "Zurich, Switzerland"
+
+
+def test_put_preferences_updates_and_persists(test_app):
+    client, _ = test_app
+    r = client.put("/api/preferences", json={"location": "Geneva, Switzerland"})
+    assert r.status_code == 200
+    assert r.json()["location"] == "Geneva, Switzerland"
+
+    # Round-trip via GET
+    r = client.get("/api/preferences")
+    assert r.json()["location"] == "Geneva, Switzerland"
+
+
+def test_put_preferences_rejects_unknown_key(test_app):
+    client, _ = test_app
+    r = client.put("/api/preferences", json={"not_a_real_key": "x"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["detail"]["error"] == "invalid_preferences"
+    assert "not_a_real_key" in body["detail"]["fields"]
+
+
+def test_put_preferences_rejects_empty_value(test_app):
+    client, _ = test_app
+    r = client.put("/api/preferences", json={"keywords": "   "})
+    assert r.status_code == 400

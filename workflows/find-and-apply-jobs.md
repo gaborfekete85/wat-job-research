@@ -17,18 +17,23 @@ preserved header) for the best matches.
   the deterministic phases run without it).
 - Python deps installed: `pip install -e ".[dev]"` (with a working `.venv`).
 
-## Inputs Claude should ask if not given
+## Inputs
 
-| Flag | Default | Notes |
-|---|---|---|
-| `location` | "Zurich, Switzerland" | Resolved via LinkedIn typeahead → geoId |
-| `keywords` | none | E.g. "software engineer" or `"ai OR software developer OR consultant"` (LinkedIn supports OR boolean) |
-| `posted_within_hours` | 72 | LinkedIn `f_TPR` filter |
-| `limit` | 15 | Max jobs to fetch |
-| `filter_cutoff` | 0.4 | Below this keyword score, LLM is not called |
-| `accept_threshold` | 0.7 | At/above this final score, a tailored CV is generated |
-| `with_cover_letter` | false | Opt-in LLM call to draft cover letter markdown |
-| `with_ats_answers` | false | Opt-in LLM call to draft common ATS question answers |
+Claude should first read saved preferences from the dashboard DB:
+`sqlite3 temp/outputs/jobs.db "SELECT key, value FROM preferences"` — or just
+hit `GET http://localhost:8765/api/preferences` if the server is running. Use
+those values as defaults; ask the user only if a preference is missing/empty.
+
+| Flag | Source | Default | Notes |
+|---|---|---|---|
+| `location` | DB preference `location` | "Zurich, Switzerland" | Resolved via LinkedIn typeahead → geoId |
+| `keywords` | DB preference `keywords` | "ai OR software developer OR consultant" | LinkedIn supports OR boolean |
+| `posted_within_hours` | CLI arg / ask | 72 | LinkedIn `f_TPR` filter |
+| `limit` | CLI arg / ask | 15 | Max jobs to fetch |
+| `filter_cutoff` | CLI arg / ask | 0.4 | Below this keyword score, LLM is not called |
+| `accept_threshold` | CLI arg / ask | 0.7 | At/above this final score, a tailored CV is generated |
+| `with_cover_letter` | CLI arg / ask | false | Opt-in LLM call to draft cover letter markdown |
+| `with_ats_answers` | CLI arg / ask | false | Opt-in LLM call to draft common ATS question answers |
 
 ## Steps Claude follows
 

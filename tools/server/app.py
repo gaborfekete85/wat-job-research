@@ -54,6 +54,30 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
     def _conn():
         return db_store.init_db(app.state.db_path)
 
+    @app.get("/api/preferences")
+    def get_prefs() -> dict:
+        conn = _conn()
+        try:
+            return db_store.get_preferences(conn)
+        finally:
+            conn.close()
+
+    @app.put("/api/preferences")
+    def update_prefs(payload: dict) -> dict:
+        conn = _conn()
+        try:
+            errors = {}
+            for key, value in payload.items():
+                try:
+                    db_store.set_preference(conn, key, value)
+                except ValueError as e:
+                    errors[key] = str(e)
+            if errors:
+                raise HTTPException(400, detail={"error": "invalid_preferences", "fields": errors})
+            return db_store.get_preferences(conn)
+        finally:
+            conn.close()
+
     @app.get("/api/jobs")
     def list_jobs() -> dict:
         conn = _conn()

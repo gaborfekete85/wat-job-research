@@ -24,3 +24,12 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status        ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_discovered_at ON jobs(discovered_at DESC);
+
+-- Per-user search preferences (key/value bag). Read at workflow time so the
+-- next search uses the most recently saved keywords + location without
+-- having to re-prompt the user.
+CREATE TABLE IF NOT EXISTS preferences (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

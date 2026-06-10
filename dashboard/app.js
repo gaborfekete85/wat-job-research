@@ -8,6 +8,23 @@ const html = htm.bind(React.createElement);
 // ─── API ───────────────────────────────────────────────────────────────────
 
 const api = {
+  async getPreferences() {
+    const r = await fetch("/api/preferences");
+    if (!r.ok) throw new Error(`prefs: ${r.status}`);
+    return r.json();
+  },
+  async updatePreferences(payload) {
+    const r = await fetch("/api/preferences", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail?.fields ? JSON.stringify(body.detail.fields) : `prefs put: ${r.status}`);
+    }
+    return r.json();
+  },
   async listJobs() {
     const r = await fetch("/api/jobs");
     if (!r.ok) throw new Error(`list: ${r.status}`);
@@ -159,6 +176,100 @@ function Column({ title, accent, jobs, expandedJobId, jobDetails, pdfStates, onV
     </div>`;
 }
 
+function PreferencesPanel({ prefs, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ keywords: "", location: "" });
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = () => {
+    setDraft({ keywords: prefs.keywords || "", location: prefs.location || "" });
+    setEditing(true);
+  };
+
+  const cancel = () => setEditing(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!prefs) return null;
+
+  if (editing) {
+    return html`
+      <div className="mb-6 p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold text-sm text-slate-700">Search preferences</h2>
+          <span className="text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+            Applies to the NEXT search Claude runs
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500 font-medium">Keywords</span>
+            <input
+              type="text"
+              value=${draft.keywords}
+              onChange=${e => setDraft({ ...draft, keywords: e.target.value })}
+              placeholder="e.g. ai OR software developer OR consultant"
+              className="px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="text-xs text-slate-400">LinkedIn supports OR boolean syntax</span>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-slate-500 font-medium">Location</span>
+            <input
+              type="text"
+              value=${draft.location}
+              onChange=${e => setDraft({ ...draft, location: e.target.value })}
+              placeholder="e.g. Zurich, Switzerland"
+              className="px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="text-xs text-slate-400">Include the country to avoid ambiguity (e.g. Zurich exists in Canada too)</span>
+          </label>
+        </div>
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick=${save}
+            disabled=${saving}
+            className="px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-700 text-sm disabled:opacity-60">
+            ${saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick=${cancel}
+            disabled=${saving}
+            className="px-3 py-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm">
+            Cancel
+          </button>
+        </div>
+      </div>`;
+  }
+
+  return html`
+    <div className="mb-6 p-3 bg-white rounded-lg border border-slate-200 shadow-sm flex flex-wrap items-center gap-3">
+      <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4">
+        <div className="text-sm">
+          <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">Keywords</span>
+          <div className="font-mono text-slate-800 truncate">${prefs.keywords}</div>
+        </div>
+        <div className="text-sm">
+          <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">Location</span>
+          <div className="font-mono text-slate-800 truncate">${prefs.location}</div>
+        </div>
+      </div>
+      <button
+        onClick=${startEdit}
+        className="px-3 py-1.5 rounded bg-slate-100 text-slate-700 hover:bg-slate-200 text-sm shrink-0">
+        Edit
+      </button>
+    </div>`;
+}
+
 function Toast({ message, type }) {
   if (!message) return null;
   const cls = type === "error"
@@ -174,6 +285,7 @@ function Toast({ message, type }) {
 
 function App() {
   const [jobs, setJobs] = useState({ new: [], viewed: [], staged: [], submitted: [] });
+  const [prefs, setPrefs] = useState(null);
   const [pdfStates, setPdfStates] = useState({});  // {job_id: 'running' | 'done' | 'error:…'}
   const [expandedJobId, setExpandedJobId] = useState(null);
   const [jobDetails, setJobDetails] = useState({});  // {job_id: full row}
@@ -191,7 +303,27 @@ function App() {
     }
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const loadPrefs = useCallback(async () => {
+    try {
+      const p = await api.getPreferences();
+      setPrefs(p);
+    } catch (e) {
+      setToast({ msg: `Failed to load preferences: ${e.message}`, type: "error" });
+    }
+  }, []);
+
+  const handleSavePrefs = useCallback(async (draft) => {
+    try {
+      const updated = await api.updatePreferences(draft);
+      setPrefs(updated);
+      setToast({ msg: "Preferences saved — next search will use these.", type: "info" });
+    } catch (e) {
+      setToast({ msg: `Save failed: ${e.message}`, type: "error" });
+      throw e;
+    }
+  }, []);
+
+  useEffect(() => { refresh(); loadPrefs(); }, [refresh, loadPrefs]);
 
   // Auto-refresh every 5 s
   useEffect(() => {
@@ -289,7 +421,7 @@ function App() {
 
   return html`
     <div className="max-w-screen-2xl mx-auto p-4 md:p-6">
-      <header className="flex items-baseline justify-between mb-6 pb-3 border-b border-slate-200">
+      <header className="flex items-baseline justify-between mb-4 pb-3 border-b border-slate-200">
         <div>
           <h1 className="text-2xl font-bold">WAT Job Search</h1>
           <p className="text-sm text-slate-500 mt-0.5">
@@ -301,6 +433,8 @@ function App() {
           <button onClick=${refresh} className="ml-2 underline hover:text-slate-600">refresh</button>
         </div>
       </header>
+
+      <${PreferencesPanel} prefs=${prefs} onSave=${handleSavePrefs} />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <${Column}

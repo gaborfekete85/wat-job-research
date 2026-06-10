@@ -158,3 +158,36 @@ def set_tailored_pdf(conn: sqlite3.Connection, job_id: str, path: Path) -> None:
         (str(path), job_id),
     )
     conn.commit()
+
+
+# ── User preferences ─────────────────────────────────────────────────────────
+
+# Sane defaults — used by GET when the DB has no value stored. Changes apply
+# to the NEXT workflow execution; the dashboard surfaces this in its UI.
+DEFAULT_PREFERENCES = {
+    "keywords": "ai OR software developer OR consultant",
+    "location": "Zurich, Switzerland",
+}
+
+
+def get_preferences(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return all stored preferences merged on top of DEFAULT_PREFERENCES."""
+    rows = conn.execute("SELECT key, value FROM preferences").fetchall()
+    stored = {r["key"]: r["value"] for r in rows}
+    return {**DEFAULT_PREFERENCES, **stored}
+
+
+def set_preference(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Upsert a single preference key. Validates the key is in DEFAULT_PREFERENCES."""
+    if key not in DEFAULT_PREFERENCES:
+        raise ValueError(
+            f"unknown preference key {key!r}; allowed: {sorted(DEFAULT_PREFERENCES)}"
+        )
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"preference {key!r} must be a non-empty string")
+    conn.execute(
+        "INSERT INTO preferences (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        (key, value.strip(), _now_iso()),
+    )
+    conn.commit()
