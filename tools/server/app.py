@@ -140,6 +140,27 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
         finally:
             conn.close()
 
+    @app.post("/api/jobs/{job_id}/status")
+    def set_job_status(job_id: str, payload: dict) -> dict:
+        """Generic status transition — used by the dashboard's drag-and-drop.
+        Body: {"status": "new"|"viewed"|"staged"|"submitted"|"dismissed"}.
+        """
+        target = (payload or {}).get("status")
+        if not target:
+            raise HTTPException(400, detail="`status` field is required")
+        conn = _conn()
+        try:
+            row = db_store.get_job(conn, job_id)
+            if row is None:
+                raise HTTPException(404, f"job {job_id} not found")
+            try:
+                db_store.set_status(conn, job_id, target)
+            except ValueError as e:
+                raise HTTPException(400, detail=str(e))
+            return _row_to_summary(db_store.get_job(conn, job_id))
+        finally:
+            conn.close()
+
     @app.post("/api/jobs/{job_id}/dismiss")
     def dismiss(job_id: str) -> dict:
         conn = _conn()

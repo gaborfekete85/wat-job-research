@@ -86,6 +86,50 @@ def test_dismiss_moves_out_of_lists(test_app):
     assert body["new"] == [] and body["viewed"] == []
 
 
+# ── Generic status endpoint (drag-and-drop) ─────────────────────────────────
+
+
+def test_set_status_moves_between_columns(test_app):
+    client, db_path = test_app
+    _seed(db_path)
+
+    # NEW → SUBMITTED (skip intermediate states is allowed — user is dragging)
+    r = client.post("/api/jobs/100/status", json={"status": "submitted"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "submitted"
+
+    body = client.get("/api/jobs").json()
+    assert body["new"] == []
+    assert len(body["submitted"]) == 1
+
+    # SUBMITTED → VIEWED (going backwards is fine)
+    r = client.post("/api/jobs/100/status", json={"status": "viewed"})
+    assert r.status_code == 200
+    body = client.get("/api/jobs").json()
+    assert len(body["viewed"]) == 1
+    assert body["submitted"] == []
+
+
+def test_set_status_validates_target(test_app):
+    client, db_path = test_app
+    _seed(db_path)
+    r = client.post("/api/jobs/100/status", json={"status": "bogus"})
+    assert r.status_code == 400
+
+
+def test_set_status_requires_status_field(test_app):
+    client, db_path = test_app
+    _seed(db_path)
+    r = client.post("/api/jobs/100/status", json={})
+    assert r.status_code == 400
+
+
+def test_set_status_404_when_missing(test_app):
+    client, _ = test_app
+    r = client.post("/api/jobs/nope/status", json={"status": "viewed"})
+    assert r.status_code == 404
+
+
 def test_get_job_includes_match_result(test_app):
     client, db_path = test_app
     _seed(db_path, llm_score={

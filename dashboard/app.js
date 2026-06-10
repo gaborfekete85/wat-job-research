@@ -30,6 +30,15 @@ const api = {
     if (!r.ok) throw new Error(`typeahead: ${r.status}`);
     return r.json();
   },
+  async setStatus(id, status) {
+    const r = await fetch(`/api/jobs/${id}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!r.ok) throw new Error(`status ${id}→${status}: ${r.status}`);
+    return r.json();
+  },
   async listJobs() {
     const r = await fetch("/api/jobs");
     if (!r.ok) throw new Error(`list: ${r.status}`);
@@ -84,13 +93,22 @@ function ScoreBadge({ label, value, accent }) {
 
 function JobCard({ job, onView, onDismiss, onGenerate, pdfState, expanded, onToggleExpand, fullDetail }) {
   const hasMatch = job.has_match_result;
-  const pdfReady = job.tailored_pdf_path && job.status === "staged";
+  const pdfReady = (job.status === "staged" || job.status === "submitted") && job.tailored_pdf_path;
   const generating = pdfState === "running";
   const errorState = (pdfState || "").startsWith("error:");
   const errorMsg = errorState ? pdfState.slice(6) : null;
 
+  const handleDragStart = (e) => {
+    e.dataTransfer.setData("text/plain", job.id);
+    e.dataTransfer.setData("application/x-job-status", job.status);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
   return html`
-    <div className="card border-2 border-slate-200 rounded-lg p-3 bg-white shadow-sm">
+    <div
+      draggable=${true}
+      onDragStart=${handleDragStart}
+      className="card border-2 border-slate-200 rounded-lg p-3 bg-white shadow-sm cursor-grab active:cursor-grabbing">
       <div className="flex justify-between items-start gap-2">
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-sm leading-tight">${job.title}</h3>
@@ -155,16 +173,55 @@ function JobCard({ job, onView, onDismiss, onGenerate, pdfState, expanded, onTog
     </div>`;
 }
 
-function Column({ title, accent, jobs, expandedJobId, jobDetails, pdfStates, onView, onDismiss, onGenerate, onToggleExpand, emptyMessage }) {
+function Column({ title, accent, status, jobs, expandedJobId, jobDetails, pdfStates, onView, onDismiss, onGenerate, onToggleExpand, onDropJob, emptyMessage }) {
+  const [isOver, setIsOver] = useState(false);
+  const dragDepth = useRef(0);  // counter for nested dragenter/leave
+
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    dragDepth.current += 1;
+    setIsOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    dragDepth.current -= 1;
+    if (dragDepth.current <= 0) {
+      dragDepth.current = 0;
+      setIsOver(false);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setIsOver(false);
+    const jobId = e.dataTransfer.getData("text/plain");
+    const fromStatus = e.dataTransfer.getData("application/x-job-status");
+    if (jobId && fromStatus !== status) {
+      onDropJob(jobId, status);
+    }
+  };
+
   return html`
-    <div className="flex-1 min-w-0 flex flex-col gap-2">
+    <div
+      onDragEnter=${handleDragEnter}
+      onDragLeave=${handleDragLeave}
+      onDragOver=${handleDragOver}
+      onDrop=${handleDrop}
+      className=${`flex-1 min-w-0 flex flex-col gap-2 rounded-lg p-2 transition-colors ${isOver ? "bg-blue-50 ring-2 ring-blue-400" : ""}`}>
       <div className=${`flex items-center justify-between border-l-4 ${accent} pl-2 mb-2`}>
         <h2 className="font-semibold text-lg">${title}</h2>
         <span className="text-xs text-slate-500">${jobs.length}</span>
       </div>
       ${jobs.length === 0 ? html`
-        <div className="text-sm text-slate-400 italic p-4 border border-dashed border-slate-300 rounded text-center">
-          ${emptyMessage}
+        <div className=${`text-sm text-slate-400 italic p-4 border border-dashed rounded text-center ${isOver ? "border-blue-400 text-blue-600" : "border-slate-300"}`}>
+          ${isOver ? "Drop here" : emptyMessage}
         </div>` : null}
       ${jobs.map(j => html`
         <${JobCard}
@@ -504,7 +561,16 @@ function App() {
     }
   };
 
-  const total = jobs.new.length + jobs.viewed.length + jobs.staged.length;
+  const handleDropJob = async (id, targetStatus) => {
+    try {
+      await api.setStatus(id, targetStatus);
+      await refresh();
+    } catch (e) {
+      setToast({ msg: `Move failed: ${e.message}`, type: "error" });
+    }
+  };
+
+  const total = jobs.new.length + jobs.viewed.length + jobs.staged.length + jobs.submitted.length;
 
   return html`
     <div className="max-w-screen-2xl mx-auto p-4 md:p-6">
@@ -512,8 +578,9 @@ function App() {
         <div>
           <h1 className="text-2xl font-bold">WAT Job Search</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            ${total} jobs · ${jobs.new.length} NEW · ${jobs.viewed.length} VIEWED · ${jobs.staged.length} STAGED${jobs.submitted.length ? ` · ${jobs.submitted.length} SUBMITTED` : ""}
+            ${total} jobs · ${jobs.new.length} NEW · ${jobs.viewed.length} VIEWED · ${jobs.staged.length} STAGED · ${jobs.submitted.length} SUBMITTED
           </p>
+          <p className="text-xs text-slate-400 mt-1">Tip: drag a card between columns to change its status.</p>
         </div>
         <div className="text-xs text-slate-400">
           Refreshed ${new Date(lastRefresh).toLocaleTimeString()}
@@ -523,9 +590,9 @@ function App() {
 
       <${PreferencesPanel} prefs=${prefs} onSave=${handleSavePrefs} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <${Column}
-          title="NEW" accent="border-blue-500"
+          title="NEW" accent="border-blue-500" status="new"
           jobs=${jobs.new}
           expandedJobId=${expandedJobId}
           jobDetails=${jobDetails}
@@ -534,10 +601,11 @@ function App() {
           onDismiss=${handleDismiss}
           onGenerate=${handleGenerate}
           onToggleExpand=${handleToggleExpand}
+          onDropJob=${handleDropJob}
           emptyMessage="No new jobs. Run a search from Claude Desktop."
         />
         <${Column}
-          title="VIEWED" accent="border-slate-400"
+          title="VIEWED" accent="border-slate-400" status="viewed"
           jobs=${jobs.viewed}
           expandedJobId=${expandedJobId}
           jobDetails=${jobDetails}
@@ -546,10 +614,11 @@ function App() {
           onDismiss=${handleDismiss}
           onGenerate=${handleGenerate}
           onToggleExpand=${handleToggleExpand}
+          onDropJob=${handleDropJob}
           emptyMessage="No viewed jobs yet."
         />
         <${Column}
-          title="STAGED" accent="border-emerald-500"
+          title="STAGED" accent="border-emerald-500" status="staged"
           jobs=${jobs.staged}
           expandedJobId=${expandedJobId}
           jobDetails=${jobDetails}
@@ -558,7 +627,21 @@ function App() {
           onDismiss=${handleDismiss}
           onGenerate=${handleGenerate}
           onToggleExpand=${handleToggleExpand}
+          onDropJob=${handleDropJob}
           emptyMessage="No applications staged yet. Click Generate PDF on a job with an LLM score."
+        />
+        <${Column}
+          title="SUBMITTED" accent="border-violet-500" status="submitted"
+          jobs=${jobs.submitted}
+          expandedJobId=${expandedJobId}
+          jobDetails=${jobDetails}
+          pdfStates=${pdfStates}
+          onView=${handleView}
+          onDismiss=${handleDismiss}
+          onGenerate=${handleGenerate}
+          onToggleExpand=${handleToggleExpand}
+          onDropJob=${handleDropJob}
+          emptyMessage="No submitted applications yet. Drag a card from STAGED here once you've actually submitted."
         />
       </div>
 
