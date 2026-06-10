@@ -113,6 +113,37 @@ def upsert_job(conn: sqlite3.Connection, job: dict) -> str:
     return job_id
 
 
+def insert_if_new(conn: sqlite3.Connection, job: dict) -> bool:
+    """Insert a job only if no row with this id exists.
+
+    Returns True if inserted, False if a row with this id was already present.
+    This is the dedup-on-ingest path used by the backfill workflow: a known
+    job is left ENTIRELY UNTOUCHED (status, scores, all timestamps preserved).
+    """
+    row = _job_to_row(job)
+    cur = conn.execute("SELECT id FROM jobs WHERE id = ?", (row["id"],))
+    if cur.fetchone() is not None:
+        return False
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            id, title, company, location, description, link, apply_url,
+            keyword_score, llm_final_score, match_result_json,
+            status, discovered_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+        """,
+        (
+            row["id"], row["title"], row["company"], row["location"],
+            row["description"], row["link"], row["apply_url"],
+            row["keyword_score"], row["llm_final_score"], row["match_result_json"],
+            _now_iso(),
+        ),
+    )
+    conn.commit()
+    return True
+
+
 def list_jobs(conn: sqlite3.Connection, status: str | None = None) -> list[dict]:
     """Return jobs as plain dicts. If status is given, filter to that status."""
     if status:

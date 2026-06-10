@@ -273,6 +273,68 @@ def test_location_typeahead_empty_for_short_query(test_app):
     assert r.json() == []
 
 
+# ── Workflow / backfill ──────────────────────────────────────────────────────
+
+
+def test_start_backfill_kicks_off_background(test_app, monkeypatch):
+    from tools.server import app as server_app, backfill_jobs
+    calls = []
+    def fake_run(**kw):
+        calls.append(kw)
+        backfill_jobs._set(state="done", stats={"inserted": 5})
+    monkeypatch.setattr(server_app.backfill_jobs, "run_backfill_safely", fake_run)
+    # Reset tracker between tests
+    backfill_jobs._set(state="idle", stats=None, error=None)
+
+    client, _ = test_app
+    r = client.post("/api/workflow/search", json={"days_back": 4, "threshold": 0.7})
+    assert r.status_code == 202
+    assert r.json()["state"] == "running"
+    assert calls[0]["days_back"] == 4
+    assert calls[0]["threshold"] == 0.7
+
+    # Status reflects "done" because the background task ran inline in TestClient
+    status = client.get("/api/workflow/status").json()
+    assert status["state"] == "done"
+
+
+def test_start_backfill_409_when_already_running(test_app, monkeypatch):
+    from tools.server import app as server_app, backfill_jobs
+    monkeypatch.setattr(server_app.backfill_jobs, "run_backfill_safely",
+                        lambda **kw: None)  # no-op; we control state manually
+    backfill_jobs._set(state="running")
+    client, _ = test_app
+    r = client.post("/api/workflow/search", json={"days_back": 4, "threshold": 0.7})
+    assert r.status_code == 409
+    backfill_jobs._set(state="idle")  # cleanup
+
+
+def test_start_backfill_validates_days(test_app):
+    from tools.server import backfill_jobs
+    backfill_jobs._set(state="idle")
+    client, _ = test_app
+    r = client.post("/api/workflow/search", json={"days_back": 99, "threshold": 0.7})
+    assert r.status_code == 400
+
+
+def test_start_backfill_validates_threshold(test_app):
+    from tools.server import backfill_jobs
+    backfill_jobs._set(state="idle")
+    client, _ = test_app
+    r = client.post("/api/workflow/search", json={"days_back": 4, "threshold": 1.5})
+    assert r.status_code == 400
+
+
+def test_backfill_status_reports_state(test_app):
+    from tools.server import backfill_jobs
+    backfill_jobs._set(state="idle", stats=None, error=None)
+    client, _ = test_app
+    r = client.get("/api/workflow/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "idle"
+
+
 def test_location_typeahead_502_on_upstream_failure(test_app, monkeypatch):
     from tools.server import app as server_app
 

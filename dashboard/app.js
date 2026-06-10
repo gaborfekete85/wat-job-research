@@ -39,6 +39,23 @@ const api = {
     if (!r.ok) throw new Error(`status ${id}→${status}: ${r.status}`);
     return r.json();
   },
+  async startBackfill({ days_back, threshold }) {
+    const r = await fetch("/api/workflow/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ days_back, threshold }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail?.message || `backfill: ${r.status}`);
+    }
+    return r.json();
+  },
+  async getBackfillStatus() {
+    const r = await fetch("/api/workflow/status");
+    if (!r.ok) throw new Error(`backfill status: ${r.status}`);
+    return r.json();
+  },
   async listJobs() {
     const r = await fetch("/api/jobs");
     if (!r.ok) throw new Error(`list: ${r.status}`);
@@ -414,6 +431,120 @@ function PreferencesPanel({ prefs, onSave }) {
     </div>`;
 }
 
+function BackfillPanel({ onRefreshJobs }) {
+  // Self-contained: triggers /api/workflow/search and polls /api/workflow/status.
+  const [days, setDays] = useState(4);
+  const [threshold, setThreshold] = useState(0.7);
+  const [status, setStatus] = useState({ state: "idle" });
+  const pollingRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await api.getBackfillStatus();
+      setStatus(s);
+      return s;
+    } catch (e) {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const beginPolling = useCallback(() => {
+    if (pollingRef.current) return;
+    pollingRef.current = true;
+    const tick = async () => {
+      const s = await refresh();
+      if (s && s.state === "running") {
+        setTimeout(tick, 1500);
+      } else {
+        pollingRef.current = false;
+        if (s && s.state === "done") {
+          onRefreshJobs && onRefreshJobs();
+        }
+      }
+    };
+    tick();
+  }, [refresh, onRefreshJobs]);
+
+  const start = async () => {
+    try {
+      await api.startBackfill({ days_back: days, threshold });
+      setStatus({ state: "running", phase: "starting" });
+      beginPolling();
+    } catch (e) {
+      setStatus({ state: "error", error: e.message });
+    }
+  };
+
+  const running = status.state === "running";
+  const done = status.state === "done";
+  const errored = status.state === "error";
+  const stats = done ? status.stats : null;
+  const phase = status.phase;
+  const phasePayload = status.phase_payload;
+
+  let phaseMsg = null;
+  if (running && phase === "scoring" && phasePayload) {
+    phaseMsg = `Scoring ${phasePayload.current}/${phasePayload.total}…`;
+  } else if (running && phase) {
+    phaseMsg = `${phase}…`;
+  }
+
+  return html`
+    <div className="mb-6 p-4 bg-white rounded-lg border border-slate-200 shadow-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+        <div>
+          <h2 className="font-semibold text-sm text-slate-700">Backfill database</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Walks every page of LinkedIn results for the saved keywords + location, ingests only jobs that
+            <em> aren't</em> already in the DB and whose keyword similarity is above the threshold.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-slate-500 font-medium">Days back</span>
+          <input type="number" min="1" max="30" value=${days}
+            onChange=${e => setDays(parseInt(e.target.value) || 1)}
+            disabled=${running}
+            className="w-24 px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-slate-500 font-medium">Threshold (0–1)</span>
+          <input type="number" step="0.05" min="0" max="1" value=${threshold}
+            onChange=${e => setThreshold(parseFloat(e.target.value) || 0)}
+            disabled=${running}
+            className="w-24 px-3 py-2 border border-slate-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-100" />
+        </label>
+        <button
+          onClick=${start}
+          disabled=${running}
+          className=${`px-4 py-2 rounded text-sm font-medium ${running ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
+          ${running ? "Running…" : "Run backfill"}
+        </button>
+        ${phaseMsg ? html`<span className="text-xs text-blue-700 ml-2">${phaseMsg}</span>` : null}
+      </div>
+
+      ${done && stats ? html`
+        <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded text-sm">
+          <div className="font-medium text-emerald-800">Backfill complete in ${stats.elapsed_seconds}s</div>
+          <div className="text-xs text-emerald-700 mt-1 flex flex-wrap gap-x-4 gap-y-1">
+            <span>Found: <b>${stats.total_found}</b></span>
+            <span>Inserted: <b>${stats.inserted}</b></span>
+            <span>Skipped (already in DB): <b>${stats.skipped_existing}</b></span>
+            <span>Skipped (below ${stats.threshold} threshold): <b>${stats.skipped_below_threshold}</b></span>
+            ${stats.fetch_failures ? html`<span>Fetch failures: <b>${stats.fetch_failures}</b></span>` : null}
+          </div>
+        </div>` : null}
+      ${errored ? html`
+        <div className="mt-3 p-3 bg-rose-50 border border-rose-200 rounded text-sm text-rose-800">
+          Backfill failed: ${status.error || "unknown error"}
+        </div>` : null}
+    </div>`;
+}
+
 function Toast({ message, type }) {
   if (!message) return null;
   const cls = type === "error"
@@ -589,6 +720,8 @@ function App() {
       </header>
 
       <${PreferencesPanel} prefs=${prefs} onSave=${handleSavePrefs} />
+
+      <${BackfillPanel} onRefreshJobs=${refresh} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <${Column}

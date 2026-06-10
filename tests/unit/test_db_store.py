@@ -139,6 +139,27 @@ def test_list_jobs_filters_by_status(db):
     assert len(store.list_jobs(db)) == 3
 
 
+def test_insert_if_new_returns_true_when_new(db):
+    inserted = store.insert_if_new(db, _sample_job())
+    assert inserted is True
+    assert store.get_job(db, "1234") is not None
+
+
+def test_insert_if_new_returns_false_when_exists(db):
+    store.upsert_job(db, _sample_job())
+    inserted = store.insert_if_new(db, _sample_job(title="changed"))
+    assert inserted is False
+    # Existing row UNTOUCHED — content not refreshed
+    assert store.get_job(db, "1234")["title"] == "Senior Eng"
+
+
+def test_insert_if_new_preserves_status(db):
+    store.upsert_job(db, _sample_job())
+    store.set_status(db, "1234", "viewed")
+    store.insert_if_new(db, _sample_job(title="changed"))
+    assert store.get_job(db, "1234")["status"] == "viewed"
+
+
 def test_set_tailored_pdf(db, tmp_path):
     store.upsert_job(db, _sample_job())
     pdf = tmp_path / "tailored.pdf"

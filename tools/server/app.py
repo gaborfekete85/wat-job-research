@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from tools.db import store as db_store
 from tools.linkedin import resolve_location
-from tools.server import pdf_jobs
+from tools.server import backfill_jobs, pdf_jobs
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +81,51 @@ def create_app(db_path: Path = DB_PATH) -> FastAPI:
             return db_store.get_preferences(conn)
         finally:
             conn.close()
+
+    @app.post("/api/workflow/search", status_code=202)
+    def start_backfill(payload: dict, background: BackgroundTasks) -> dict:
+        """Kick off a backfill: walk all pages of LinkedIn results over the last
+        N days and ingest jobs whose keyword score >= threshold (skipping any
+        already in the DB)."""
+        if backfill_jobs.is_running():
+            raise HTTPException(409, detail={
+                "error": "backfill_already_running",
+                "message": "A backfill is already in progress. Poll /api/workflow/status.",
+            })
+        days_back = int(payload.get("days_back", 4))
+        threshold = float(payload.get("threshold", 0.7))
+        if not (1 <= days_back <= 30):
+            raise HTTPException(400, "days_back must be between 1 and 30")
+        if not (0.0 <= threshold <= 1.0):
+            raise HTTPException(400, "threshold must be between 0.0 and 1.0")
+
+        conn = _conn()
+        try:
+            prefs = db_store.get_preferences(conn)
+        finally:
+            conn.close()
+        keywords = payload.get("keywords") or prefs.get("keywords")
+        location = payload.get("location") or prefs.get("location")
+        geo_id = payload.get("location_geo_id") or prefs.get("location_geo_id")
+        if not keywords:
+            raise HTTPException(400, "keywords missing (none in payload or DB preference)")
+
+        background.add_task(
+            backfill_jobs.run_backfill_safely,
+            keywords=keywords,
+            location=location,
+            location_geo_id=geo_id,
+            days_back=days_back,
+            threshold=threshold,
+            db_path=app.state.db_path,
+            profile_path=PROFILE_PATH,
+        )
+        return {"state": "running", "days_back": days_back, "threshold": threshold,
+                "keywords": keywords, "location_geo_id": geo_id}
+
+    @app.get("/api/workflow/status")
+    def get_backfill_status() -> dict:
+        return backfill_jobs.get_state()
 
     @app.get("/api/locations/typeahead")
     def location_typeahead(q: str) -> list[dict]:
