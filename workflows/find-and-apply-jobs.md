@@ -1,73 +1,106 @@
 # Find and Apply to Jobs
 
-Purpose: Search LinkedIn for jobs matching the user's profile, score each
-against `temp/resources/profile.md`, and stage tailored applications for
-the best matches.
+> **Execution mode:** Claude Desktop only. Open this directory in Claude Desktop,
+> ask Claude to "find me jobs matching X, generate tailored CVs," and it will follow
+> the steps below.
+
+Purpose: Search LinkedIn for jobs matching the user's profile, score each against
+`temp/resources/profile.md`, and stage tailored applications (with the source CV's
+preserved header) for the best matches.
 
 ## Prerequisites
-- `temp/resources/profile.md` exists.
-- `.env` contains `ANTHROPIC_API_KEY`.
-- `pip install -e ".[dev]"` has been run.
-- `rendercv` is installed (`pip install "rendercv[full]"` if missing).
+- `temp/resources/profile.md` exists (the user's structured profile YAML).
+- `temp/resources/gabor-fekete_<TIMESTAMP>.pdf` exists (the source CV whose header —
+  QR codes, photo, contact, LinkedIn/GitHub links — will be preserved on all
+  tailored output). Use the latest one in that folder if multiple exist.
+- `.env` contains `ANTHROPIC_API_KEY` (only needed for the LLM scoring step;
+  the deterministic phases run without it).
+- Python deps installed: `pip install -e ".[dev]"` (with a working `.venv`).
 
-## Inputs (CLI flags / agent should ask if missing)
-- `--location` (required)        e.g. "Zurich, Switzerland"
-- `--keywords` (required)        e.g. "engineer"
-- `--posted-within-hours` (default 24)
-- `--limit` (default 50)
-- `--filter-cutoff` (default 0.4) — keyword score below this skips LLM call
-- `--accept-threshold` (default 0.7) — final score at/above this triggers CV staging
-- `--with-cover-letter` (default off)
-- `--with-ats-answers` (default off)
-- `--no-cache` (default off)
+## Inputs Claude should ask if not given
 
-## Steps
+| Flag | Default | Notes |
+|---|---|---|
+| `location` | "Zurich, Switzerland" | Resolved via LinkedIn typeahead → geoId |
+| `keywords` | none | E.g. "software engineer" or `"ai OR software developer OR consultant"` (LinkedIn supports OR boolean) |
+| `posted_within_hours` | 72 | LinkedIn `f_TPR` filter |
+| `limit` | 15 | Max jobs to fetch |
+| `filter_cutoff` | 0.4 | Below this keyword score, LLM is not called |
+| `accept_threshold` | 0.7 | At/above this final score, a tailored CV is generated |
+| `with_cover_letter` | false | Opt-in LLM call to draft cover letter markdown |
+| `with_ats_answers` | false | Opt-in LLM call to draft common ATS question answers |
 
-All Python invocations use `python -m tools.X.Y` style (the project uses
-`packages = []` in `pyproject.toml`, so direct script paths don't resolve
-the internal `tools.shared.http` import).
+## Steps Claude follows
 
-1. **Resolve location.** Run `python -m tools.linkedin.resolve_location "<location>" --pick-first`.
-   Save the returned `id` as `geo_id`. If multiple Switzerland options exist
-   in the non-`--pick-first` output, prefer the one whose `displayName` matches
-   the user's intent.
+All Python invocations use `python -m tools.X.Y` form (the project's `pyproject.toml`
+declares `packages = []`, so direct script-path invocation breaks the internal
+`tools.shared.http` import).
 
-2. **Search jobs.** Run
-   `python -m tools.linkedin.search_jobs --keywords <kw> --geo-id <geo_id> [--posted-within-hours N] --limit N -o <run_dir>/jobs_raw.json`.
+1. **Set up the run directory.** Create `temp/outputs/runs/<UTC-timestamp>/`.
+   Use that as `RUN_DIR` for intermediates.
 
-3. **For each job in `jobs_raw.json`:**
-   3a. Check `temp/outputs/cache/<job_id>.json`. If present and `cached_at`
-       is within 7 days and (for keyword/llm scores) newer than `profile.md` mtime,
-       reuse cached fields. Else call `python -m tools.linkedin.get_job_details <job_id>`
-       and write to cache.
-   3b. Run `python -m tools.match.extract_skills --source jd` on the JD text, then
-       `python -m tools.match.score_keyword --profile temp/resources/profile.md --jd <jd_file>`.
-   3c. If keyword score < `--filter-cutoff` → skip this job; log "filtered".
-   3d. Run `python -m tools.match.score_llm` with the JD details and keyword result.
-   3e. If `final_score < --accept-threshold` → log "below threshold"; continue.
-   3f. Else:
-       - `python -m tools.cv.tailor` → `tailored_cv.yml`
-       - `python -m tools.cv.render` → `tailored_cv.pdf`
-       - If `--with-cover-letter`: `python -m tools.application.draft_cover_letter`
-       - If `--with-ats-answers`: `python -m tools.application.draft_ats_answers`
-       - `python -m tools.application.stage` to assemble the folder.
+2. **Resolve the location** → geoId.
+   `python -m tools.linkedin.resolve_location "<location>" --pick-first` → save the
+   `id` field as `geo_id`. If multiple Switzerland entries exist in the non-`--pick-first`
+   form, prefer the displayName the user means (Zurich vs Zürich Metropolitan Area).
 
-4. **Print summary table** to stdout (counts of search/filtered/matched/accepted).
+3. **Search jobs.**
+   `python -m tools.linkedin.search_jobs --keywords "<kw>" --geo-id <geo_id> --posted-within-hours <N> --limit <L> -o <RUN_DIR>/jobs_raw.json`
 
-5. **Next-action checklist** — for each staged application, print:
-   - `open temp/outputs/applications/{job_id}__*/apply_url.txt`
-   - `python -m tools.application.mark_submitted {job_id}`
+4. **For each job in `jobs_raw.json`:**
+
+   - **Cache lookup:** check `temp/outputs/cache/<job_id>.json`. If present and the
+     stored `cached_at` is within 7 days (and, for keyword/llm scores, newer than
+     `profile.md`'s mtime), reuse it. Else call `python -m tools.linkedin.get_job_details <job_id>`
+     and write the result into the cache file as `{"job_detail": ..., "cached_at": ...}`.
+
+   - **Keyword pre-filter (deterministic, free):** run
+     `tools.match.extract_skills` on the JD description text + on `profile.md`,
+     then `tools.match.score_keyword`. Attach the result as `job["keyword_score"]`.
+     Drop jobs where `score < filter_cutoff`.
+
+   - **LLM scoring (paid, requires ANTHROPIC_API_KEY):**
+     `python -m tools.match.score_llm --profile temp/resources/profile.md --job-details <jd.json> --keyword-result <kw.json>`
+     returns the full structured result including `final_score`, `seniority_fit`,
+     `location_fit`, `matched_skills`, `missing_critical`, `reasoning`, and
+     `suggested_emphasis`. Attach as `job["llm_score"]` and cache it.
+
+5. **For each accepted job (`final_score ≥ accept_threshold`):**
+
+   - **Tailor the CV YAML:**
+     `python -m tools.cv.tailor --profile temp/resources/profile.md --match-result <match.json> -o <APP_DIR>/tailored.yml`
+
+   - **Render the tailored CV PDF — WITH the source header preserved:**
+     `python -m tools.cv.render_with_source_header --source temp/resources/<source>.pdf --tailored-yml <APP_DIR>/tailored.yml -o <APP_DIR>/tailored_cv.pdf`
+     (This uses WeasyPrint for the body + pymupdf for the header overlay.)
+
+   - **Optional artifacts:**
+     - If `with_cover_letter`: `python -m tools.application.draft_cover_letter`
+     - If `with_ats_answers`: `python -m tools.application.draft_ats_answers`
+
+   - **Stage the application:**
+     `python -m tools.application.stage --job-details <jd.json> --cv <APP_DIR>/tailored_cv.pdf --match-result <match.json> [--cover-letter ...] [--ats-answers ...]`
+     This creates `temp/outputs/applications/<job_id>__<company>__<slug>/` with all
+     the artifacts and appends a row to `temp/outputs/applications.csv`.
+
+6. **Summarize for the user:**
+   - search count, filter-pass count, LLM-scored count, accepted count, staged count
+   - For each staged job: print the apply URL and the mark-submitted command:
+     `python -m tools.application.mark_submitted <job_id> --notes "..."`
+
+## When the API key isn't available
+
+Claude should still run steps 1-4 (everything up to the keyword pre-filter is
+deterministic and free) and present the candidate list to the user. The user can
+then ask Claude to hand-craft a `match.json` with `suggested_emphasis` for specific
+high-interest jobs, then proceed to step 5 to render the tailored CVs.
 
 ## Outputs
 
-- `temp/outputs/runs/<timestamp>/` — intermediates (`jobs_raw.json`,
-  `jobs_with_details.json`, `jobs_filtered.json`, `jobs_matched.json`, `run.log`).
-- `temp/outputs/applications/{job_id}__{company}__{slug}/` — durable per-job folder.
+- `temp/outputs/runs/<timestamp>/` — intermediates (`jobs_raw.json`, `jobs_with_details.json`,
+  `jobs_filtered.json`, `jobs_matched.json`).
+- `temp/outputs/applications/{job_id}__{company}__{slug}/` — durable per-job folder
+  (job_details.json, match_result.json, tailored.yml, tailored_cv.pdf, optional
+  cover_letter.md / ats_answers.md, apply_url.txt, submitted.json after marking).
 - `temp/outputs/applications.csv` — master log.
-- `temp/outputs/cache/<job_id>.json` — cache (7d TTL).
-
-## Mode A (single command) shortcut
-
-For batch runs, `./tools/run.sh` chains all the above steps with the same
-flags. The agent mode (this file) and the bash mode (`run.sh`) mirror each
-other step-for-step.
+- `temp/outputs/cache/<job_id>.json` — cache (7-day TTL).

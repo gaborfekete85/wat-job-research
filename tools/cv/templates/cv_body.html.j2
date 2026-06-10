@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4;
+    margin: {{ top_margin_cm }}cm 1.5cm 2cm 1.5cm;
+  }
+  body {
+    font-family: 'Source Sans 3', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 10.5pt;
+    color: #1f1f1f;
+    line-height: 1.45;
+    margin: 0;
+    padding: 0;
+  }
+  h2 {
+    color: #1e63a8;
+    font-size: 14pt;
+    font-weight: 700;
+    margin: 14pt 0 6pt 0;
+    padding-bottom: 4pt;
+    border-bottom: 0.6pt solid #b0b0b0;
+  }
+  .summary {
+    margin: 0 0 4pt 0;
+    text-align: justify;
+  }
+  .entry {
+    margin-bottom: 12pt;
+    page-break-inside: avoid;
+  }
+  .entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 2pt;
+  }
+  .entry-title {
+    font-weight: 700;
+    font-size: 11pt;
+  }
+  .entry-meta {
+    color: #555;
+    font-style: italic;
+    font-size: 9.5pt;
+    white-space: nowrap;
+  }
+  ul {
+    margin: 3pt 0 0 0;
+    padding-left: 16pt;
+  }
+  li {
+    margin-bottom: 3pt;
+    text-align: justify;
+  }
+  .stack {
+    margin-top: 5pt;
+    font-style: italic;
+    color: #555;
+    font-size: 9.5pt;
+  }
+  .stack b {
+    font-style: normal;
+    color: #1f1f1f;
+  }
+  .one-liner {
+    margin-bottom: 4pt;
+  }
+  .one-liner b { color: #1f1f1f; }
+  .first-section h2 { margin-top: 0; }
+</style>
+</head>
+<body>
+
+{% if summary %}
+<div class="first-section">
+<h2>Summary</h2>
+<p class="summary">{{ summary }}</p>
+</div>
+{% endif %}
+
+{% if experience %}
+<h2{% if not summary %} class="first-section-h2"{% endif %}>Experience</h2>
+{% for e in experience %}
+<div class="entry">
+  <div class="entry-header">
+    <span class="entry-title">{{ e.role }} — {{ e.company }}</span>
+    <span class="entry-meta">{{ e.start }} – {{ e.end }} · {{ e.location }}</span>
+  </div>
+  {% if e.highlights %}
+  <ul>
+    {% for h in e.highlights %}
+    <li>{{ h }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if e.keywords %}
+  <div class="stack"><b>Stack:</b> {{ e.keywords | join(', ') }}</div>
+  {% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if education %}
+<h2>Education</h2>
+{% for ed in education %}
+<div class="entry">
+  <div class="entry-header">
+    <span class="entry-title">{{ ed.degree }} — {{ ed.school }}</span>
+    <span class="entry-meta">{{ ed.start }} – {{ ed.end }} · {{ ed.location }}</span>
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{% if certifications %}
+<h2>Certifications</h2>
+{% for c in certifications %}
+<div class="one-liner">
+  <b>{{ c.name }}</b> — {{ c.issuer }}{% if c.year %} ({{ c.year }}){% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if projects %}
+<h2>Projects</h2>
+<div class="one-liner">{{ projects | join(', ') }}</div>
+{% endif %}
+
+{% if languages %}
+<h2>Languages</h2>
+{% for l in languages %}
+<div class="one-liner"><b>{{ l.name }}</b> — {{ l.level }}</div>
+{% endfor %}
+{% endif %}
+
+{% if hobbies %}
+<h2>Hobbies</h2>
+<div class="one-liner">{{ hobbies }}</div>
+{% endif %}
+
+</body>
+</html>
